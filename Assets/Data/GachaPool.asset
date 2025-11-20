@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2190bfa5571a1704c8eb2eb73bbc9f8a, type: 3}
+  m_Name: GachaPool
+  m_EditorClassIdentifier: 
+  entries:
+  - character: {fileID: 11400000, guid: 8788bb93b5eb2c144934110ce668d3d6, type: 2}
+    weight: 70
+  - character: {fileID: 11400000, guid: 2faec162d8bbd2c4b81390ec85389835, type: 2}
+    weight: 20
+  - character: {fileID: 11400000, guid: 3781fab6bf6332045884a1d59ffa6f09, type: 2}
+    weight: 9
+  - character: {fileID: 11400000, guid: 7d5043092fdc84345b18cb951e2965f0, type: 2}
+    weight: 0.99
+  - character: {fileID: 11400000, guid: c76ead0c2e714414599ed0834ba98c45, type: 2}
+    weight: 0.1
