@@ -1,183 +1,156 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
-using System.Text;
 
-/// HeroPreviewPanel - mostra versão grande do herói (RenderTexture via PreviewRenderer),
-/// além do nome, raridade, ícone, level e outros status.
-/// Esta versão inclui logs de debug para ajudar a identificar se os dados chegam corretamente.
-public class HeroPreviewPanel : MonoBehaviour
+namespace InfiniteGacha
 {
-    public static HeroPreviewPanel Instance { get; private set; }
-
-    [Header("UI (assign in Inspector)")]
-    public GameObject panelRoot;      // root do painel (Active/Inactive)
-    public RawImage bigPreviewRaw;    // RawImage grande para RenderTexture
-    public Image iconImage;
-    public Text nameText;
-    public Text rarityText;
-    public Text statsText;            // campo que exibirá HP/ATK/DEF/SPD/Level etc.
-    public Text descriptionText;
-    public Button closeButton;
-
-    [Header("Preview settings")]
-    public int previewSize = 512;
-    public float modelPreviewScale = 1.4f;
-
-    PreviewRenderer.PreviewHandle previewHandle;
-    CharacterData currentData;
-
-    void Awake()
+    [DisallowMultipleComponent]
+    public class HeroPreviewPanel : MonoBehaviour
     {
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
+        // Singleton disponível como HeroPreviewPanel.Instance
+        public static HeroPreviewPanel Instance { get; private set; }
 
-        if (panelRoot == null)
+        [Header("Referências de UI")]
+        [SerializeField] private GameObject panelRoot;      // root do painel (normalmente o próprio GameObject)
+        [SerializeField] private Text heroNameText;
+        [SerializeField] private Image heroPortrait;
+        [SerializeField] private Button closeButton;
+        [SerializeField] private CanvasGroup canvasGroup;    // opcional para fade
+
+        [Header("Animação")]
+        [SerializeField] private float fadeDuration = 0.15f;
+
+        private void Awake()
         {
-            panelRoot = this.gameObject;
-            Debug.LogWarning("HeroPreviewPanel: panelRoot não estava atribuído; usando o próprio GameObject como panelRoot.");
+            // Singleton simples
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("HeroPreviewPanel: já existe uma instância, destruindo duplicata.");
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+
+            if (panelRoot == null) panelRoot = this.gameObject;
+
+            if (closeButton != null)
+            {
+                closeButton.onClick.RemoveAllListeners();
+                closeButton.onClick.AddListener(Close);
+            }
+
+            // inicia fechado
+            if (panelRoot != null) panelRoot.SetActive(false);
+
+            if (canvasGroup == null)
+                canvasGroup = panelRoot != null ? panelRoot.GetComponent<CanvasGroup>() : GetComponent<CanvasGroup>();
         }
 
-        // garante que comece desativado
-        if (panelRoot != null) panelRoot.SetActive(false);
-
-        if (closeButton != null)
+        private void OnDestroy()
         {
-            closeButton.onClick.RemoveAllListeners();
-            closeButton.onClick.AddListener(Hide);
-        }
-    }
-
-    public void Show(CharacterData data)
-    {
-        if (data == null)
-        {
-            Debug.LogWarning("HeroPreviewPanel.Show: data is null");
-            return;
+            if (Instance == this) Instance = null;
         }
 
-        currentData = data;
-
-        if (panelRoot == null)
+        // Abre sem dados
+        public void Open()
         {
-            Debug.LogError("HeroPreviewPanel.Show: panelRoot é null — não é possível abrir o painel.");
-            return;
+            if (panelRoot == null)
+            {
+                Debug.LogError("HeroPreviewPanel.Open: panelRoot não atribuído.");
+                return;
+            }
+
+            panelRoot.SetActive(true);
+            transform.SetAsLastSibling();
+            if (canvasGroup != null) StartCoroutine(FadeCanvas(0f, 1f, fadeDuration));
         }
 
-        Debug.Log($"HeroPreviewPanel.Show: abrindo painel para '{data.displayName}' (id='{data.characterId}')");
-        panelRoot.SetActive(true);
-
-        // Nome
-        if (nameText != null) nameText.text = string.IsNullOrEmpty(data.displayName) ? "(sem nome)" : data.displayName;
-
-        // Raridade (texto + cor)
-        if (rarityText != null)
+        // Abre com HeroData
+        public void Open(HeroData hero)
         {
-            rarityText.text = data.rarity.ToString();
-            rarityText.color = RarityToColor(data.rarity);
+            if (hero == null)
+            {
+                Debug.LogWarning("HeroPreviewPanel.Open recebeu hero nulo.");
+                Open();
+                return;
+            }
+
+            if (heroNameText != null) heroNameText.text = string.IsNullOrEmpty(hero.displayName) ? "Unknown" : hero.displayName;
+            if (heroPortrait != null) heroPortrait.sprite = hero.portraitSprite;
+
+            Open();
+            Debug.Log($"HeroPreviewPanel: aberto para {hero.displayName}");
         }
 
-        // Ícone
-        if (iconImage != null)
+        // Fecha
+        public void Close()
         {
-            if (data.sprite != null) { iconImage.sprite = data.sprite; iconImage.color = Color.white; }
-            else { iconImage.sprite = null; iconImage.color = new Color(1,1,1,0); }
+            if (panelRoot == null)
+            {
+                Debug.LogError("HeroPreviewPanel.Close: panelRoot não atribuído.");
+                return;
+            }
+
+            if (canvasGroup != null)
+            {
+                StartCoroutine(FadeOutAndDisable(fadeDuration));
+            }
+            else
+            {
+                panelRoot.SetActive(false);
+            }
         }
 
-        // Stats
-        if (statsText != null)
-            statsText.text = BuildStatsText(data);
-        else
-            Debug.LogWarning("HeroPreviewPanel.Show: statsText não atribuído no Inspector — não será mostrado o texto de status.");
+        // Aliases para compatibilidade com código que usa Show()
+        public void Show() => Open();
+        public void Show(HeroData hero) => Open(hero);
 
-        // Descrição
-        if (descriptionText != null)
-            descriptionText.text = string.IsNullOrEmpty(data.description) ? "" : data.description;
-
-        // preview grande via PreviewRenderer
-        if (previewHandle != null)
+        // --- Compatibilidade direta com CharacterData (overloads) ---
+        // Se seu projeto usa CharacterData, chame Show(character) diretamente.
+        public void Show(CharacterData character)
         {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
+            Open(Convert(character));
         }
 
-        if (PreviewRenderer.Instance != null && data.prefab3D != null && bigPreviewRaw != null)
+        public void Open(CharacterData character)
         {
-            previewHandle = PreviewRenderer.Instance.CreatePreview(data.prefab3D, bigPreviewRaw, previewSize, modelPreviewScale);
-        }
-        else if (bigPreviewRaw != null)
-        {
-            bigPreviewRaw.texture = null;
-            bigPreviewRaw.color = new Color(1,1,1,0.2f);
+            Open(Convert(character));
         }
 
-        // debug: imprime todos os campos relevantes no Console para inspecionar valores
-        Debug.Log(BuildDebugLog(data));
-    }
-
-    public void Hide()
-    {
-        if (panelRoot != null) panelRoot.SetActive(false);
-
-        if (previewHandle != null)
+        // Converte CharacterData -> HeroData (mapeie conforme seu CharacterData real)
+        private HeroData Convert(CharacterData character)
         {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
+            if (character == null) return null;
+
+            var h = new HeroData
+            {
+                displayName = string.IsNullOrEmpty(character.displayName) ? "Unknown" : character.displayName,
+                portraitSprite = character.portraitSprite
+            };
+
+            return h;
         }
-        currentData = null;
-    }
 
-    string BuildStatsText(CharacterData data)
-    {
-        if (data == null) return "";
-
-        var sb = new StringBuilder();
-        sb.AppendLine($"Nível: {data.level}");
-        sb.AppendLine($"Raridade: {data.rarity}");
-        sb.AppendLine($"HP: {data.hp}");
-        sb.AppendLine($"ATK: {data.atk}");
-        sb.AppendLine($"DEF: {data.def}");
-        sb.AppendLine($"SPD: {data.spd}");
-        return sb.ToString();
-    }
-
-    string BuildDebugLog(CharacterData d)
-    {
-        if (d == null) return "CharacterData: null";
-        var sb = new StringBuilder();
-        sb.AppendLine("CharacterData dump:");
-        sb.AppendLine($"  id: {d.characterId}");
-        sb.AppendLine($"  name: {d.displayName}");
-        sb.AppendLine($"  rarity: {d.rarity} ({(int)d.rarity})");
-        sb.AppendLine($"  level: {d.level}");
-        sb.AppendLine($"  hp: {d.hp}");
-        sb.AppendLine($"  atk: {d.atk}");
-        sb.AppendLine($"  def: {d.def}");
-        sb.AppendLine($"  spd: {d.spd}");
-        sb.AppendLine($"  prefab3D: {(d.prefab3D != null ? d.prefab3D.name : "null")}");
-        sb.AppendLine($"  sprite: {(d.sprite != null ? d.sprite.name : "null")}");
-        return sb.ToString();
-    }
-
-    Color RarityToColor(Rarity r)
-    {
-        switch (r)
+        // Coroutines de fade
+        private System.Collections.IEnumerator FadeCanvas(float from, float to, float duration)
         {
-            case Rarity.Common:    return new Color(0.9f, 0.9f, 0.9f);
-            case Rarity.Uncommon:  return new Color(0.3f, 0.8f, 0.3f);
-            case Rarity.Rare:      return new Color(0.25f, 0.5f, 1f);
-            case Rarity.Epic:      return new Color(0.6f, 0.2f, 0.9f);
-            case Rarity.Legendary: return new Color(1f, 0.7f, 0.15f);
-            default: return Color.white;
+            if (canvasGroup == null) yield break;
+            float t = 0f;
+            canvasGroup.alpha = from;
+            while (t < duration)
+            {
+                t += Time.unscaledDeltaTime;
+                canvasGroup.alpha = Mathf.Lerp(from, to, Mathf.Clamp01(t / duration));
+                yield return null;
+            }
+            canvasGroup.alpha = to;
         }
-    }
 
-    void OnDestroy()
-    {
-        if (previewHandle != null)
+        private System.Collections.IEnumerator FadeOutAndDisable(float duration)
         {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
+            yield return FadeCanvas(1f, 0f, duration);
+            if (panelRoot != null) panelRoot.SetActive(false);
         }
-        if (Instance == this) Instance = null;
     }
 }
