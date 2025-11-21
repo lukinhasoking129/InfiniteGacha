@@ -1,7 +1,7 @@
 ```markdown
 # Meu Projeto Unity
 
-Versão do Unity: 2022.3.62f3
+Versão do Unity: coloque aqui (ex: 2022.3.15f1)
 
 Como abrir:
 1. Clone o repositório.
