@@ -1,44 +1,73 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.Text;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
-using System.Text;
 
-/// HeroPreviewPanel - mostra versão grande do herói (RenderTexture via PreviewRenderer),
-/// além do nome, raridade, ícone, level e outros status.
-/// Esta versão inclui logs de debug para ajudar a identificar se os dados chegam corretamente.
+/// HeroPreviewPanel
+/// - Gerencia o painel modal de preview do herói.
+/// - Popula ícone, nome e stats (usa reflexão para montar os stats automaticamente).
+/// - Opcionalmente instancia um preview 3D (prefab) dentro de results3DParent.
+/// - Expõe um singleton Instance para compatibilidade com chamadas antigas.
 public class HeroPreviewPanel : MonoBehaviour
 {
+    // Singleton (compatibilidade)
     public static HeroPreviewPanel Instance { get; private set; }
 
-    [Header("UI (assign in Inspector)")]
-    public GameObject panelRoot;      // root do painel (Active/Inactive)
-    public RawImage bigPreviewRaw;    // RawImage grande para RenderTexture
+    [Header("UI refs (arraste no Inspector)")]
+    [Tooltip("O GameObject raiz do painel (modal).")]
+    public GameObject panelRoot;
+
+    [Tooltip("Image onde será mostrado o sprite do herói.")]
     public Image iconImage;
+
+    [Tooltip("Texto do nome do herói.")]
     public Text nameText;
-    public Text rarityText;
-    public Text statsText;            // campo que exibirá HP/ATK/DEF/SPD/Level etc.
-    public Text descriptionText;
+
+    [Tooltip("Texto que exibirá os stats (pode ficar em branco se você não quiser).")]
+    public Text statsText;
+
+    [Tooltip("Botão fechar do painel (opcional).")]
     public Button closeButton;
 
-    [Header("Preview settings")]
-    public int previewSize = 512;
-    public float modelPreviewScale = 1.4f;
+    [Header("Preview 3D (opcional)")]
+    [Tooltip("Parent onde instanciar o modelo 3D para preview (opcional).")]
+    public Transform results3DParent;
 
-    PreviewRenderer.PreviewHandle previewHandle;
-    CharacterData currentData;
+    [Tooltip("Ponto de spawn local/world (usado se results3DParent for nulo).")]
+    public Transform previewSpawnPoint;
+
+    [Tooltip("Escala aplicada ao preview 3D instanciado.")]
+    public float previewScale = 1f;
+
+    [Tooltip("Se true, o painel instancia o prefab3D (se existir) ao abrir.")]
+    public bool enable3DPreview = false;
+
+    // runtime
+    GameObject currentPreviewInstance;
+
+    void Reset()
+    {
+        if (panelRoot == null) panelRoot = this.gameObject;
+    }
 
     void Awake()
     {
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
-
-        if (panelRoot == null)
+        // Singleton setup
+        if (Instance == null)
         {
-            panelRoot = this.gameObject;
-            Debug.LogWarning("HeroPreviewPanel: panelRoot não estava atribuído; usando o próprio GameObject como panelRoot.");
+            Instance = this;
+        }
+        else if (Instance != this)
+        {
+            Debug.LogWarning("Multiple HeroPreviewPanel instances detected. Destroying duplicate.");
+            Destroy(this.gameObject);
+            return;
         }
 
-        // garante que comece desativado
-        if (panelRoot != null) panelRoot.SetActive(false);
+        if (panelRoot != null)
+            panelRoot.SetActive(false);
 
         if (closeButton != null)
         {
@@ -47,137 +76,246 @@ public class HeroPreviewPanel : MonoBehaviour
         }
     }
 
+    void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+    }
+
+    /// Show: abre o painel e popula com os dados fornecidos.
     public void Show(CharacterData data)
     {
-        if (data == null)
-        {
-            Debug.LogWarning("HeroPreviewPanel.Show: data is null");
-            return;
-        }
-
-        currentData = data;
-
         if (panelRoot == null)
         {
-            Debug.LogError("HeroPreviewPanel.Show: panelRoot é null — não é possível abrir o painel.");
+            Debug.LogWarning("HeroPreviewPanel.Show: panelRoot não atribuído.");
             return;
         }
 
-        Debug.Log($"HeroPreviewPanel.Show: abrindo painel para '{data.displayName}' (id='{data.characterId}')");
+        Populate(data);
+
         panelRoot.SetActive(true);
+        panelRoot.transform.SetAsLastSibling();
 
-        // Nome
-        if (nameText != null) nameText.text = string.IsNullOrEmpty(data.displayName) ? "(sem nome)" : data.displayName;
-
-        // Raridade (texto + cor)
-        if (rarityText != null)
+        if (enable3DPreview && data != null && data.prefab3D != null)
         {
-            rarityText.text = data.rarity.ToString();
-            rarityText.color = RarityToColor(data.rarity);
+            Create3DPreview(data);
         }
-
-        // Ícone
-        if (iconImage != null)
-        {
-            if (data.sprite != null) { iconImage.sprite = data.sprite; iconImage.color = Color.white; }
-            else { iconImage.sprite = null; iconImage.color = new Color(1,1,1,0); }
-        }
-
-        // Stats
-        if (statsText != null)
-            statsText.text = BuildStatsText(data);
-        else
-            Debug.LogWarning("HeroPreviewPanel.Show: statsText não atribuído no Inspector — não será mostrado o texto de status.");
-
-        // Descrição
-        if (descriptionText != null)
-            descriptionText.text = string.IsNullOrEmpty(data.description) ? "" : data.description;
-
-        // preview grande via PreviewRenderer
-        if (previewHandle != null)
-        {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
-        }
-
-        if (PreviewRenderer.Instance != null && data.prefab3D != null && bigPreviewRaw != null)
-        {
-            previewHandle = PreviewRenderer.Instance.CreatePreview(data.prefab3D, bigPreviewRaw, previewSize, modelPreviewScale);
-        }
-        else if (bigPreviewRaw != null)
-        {
-            bigPreviewRaw.texture = null;
-            bigPreviewRaw.color = new Color(1,1,1,0.2f);
-        }
-
-        // debug: imprime todos os campos relevantes no Console para inspecionar valores
-        Debug.Log(BuildDebugLog(data));
     }
 
+    /// Hide: fecha o painel e limpa qualquer preview 3D criado
     public void Hide()
     {
-        if (panelRoot != null) panelRoot.SetActive(false);
+        if (panelRoot != null)
+            panelRoot.SetActive(false);
 
-        if (previewHandle != null)
-        {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
-        }
-        currentData = null;
+        Clear3DPreview();
     }
 
-    string BuildStatsText(CharacterData data)
+    /// Populate: preenche os campos do painel com os dados do CharacterData
+    void Populate(CharacterData data)
+    {
+        // Icon
+        if (iconImage != null)
+        {
+            if (data != null && data.sprite != null)
+            {
+                iconImage.sprite = data.sprite;
+                iconImage.color = Color.white;
+            }
+            else
+            {
+                iconImage.sprite = null;
+                iconImage.color = new Color(1,1,1,0);
+            }
+        }
+
+        // Name
+        if (nameText != null)
+            nameText.text = data?.displayName ?? "(sem nome)";
+
+        // Stats (formatted, prefer ordered presentation)
+        if (statsText != null)
+        {
+            statsText.text = FormatStats(data);
+        }
+    }
+
+    /// Cria um preview 3D simples: instancia prefab, parenta em results3DParent (se houver) e aplica scale/rot.
+    void Create3DPreview(CharacterData data)
+    {
+        Clear3DPreview(); // garante limpeza anterior
+
+        Vector3 spawnPos;
+        Quaternion spawnRot = Quaternion.identity;
+
+        if (results3DParent != null)
+        {
+            spawnPos = results3DParent.position;
+        }
+        else if (previewSpawnPoint != null)
+        {
+            spawnPos = previewSpawnPoint.position;
+        }
+        else
+        {
+            var cam = Camera.main;
+            spawnPos = cam != null ? cam.transform.position + cam.transform.forward * 3f : Vector3.zero;
+        }
+
+        if (data.prefab3D == null)
+            return;
+
+        currentPreviewInstance = Instantiate(data.prefab3D, spawnPos, spawnRot);
+
+        if (results3DParent != null)
+            currentPreviewInstance.transform.SetParent(results3DParent, true);
+
+        currentPreviewInstance.transform.localScale = Vector3.one * previewScale;
+
+        var mainCam = Camera.main;
+        if (mainCam != null)
+        {
+            Vector3 dir = mainCam.transform.position - currentPreviewInstance.transform.position;
+            dir.y = 0f;
+            if (dir.sqrMagnitude > 0.0001f)
+                currentPreviewInstance.transform.rotation = Quaternion.LookRotation(dir);
+        }
+
+        var cols = currentPreviewInstance.GetComponentsInChildren<Collider>();
+        foreach (var c in cols) c.enabled = false;
+
+        if (currentPreviewInstance != null)
+            StartCoroutine(PopIn(currentPreviewInstance.transform, Vector3.one * previewScale, 0.18f));
+    }
+
+    void Clear3DPreview()
+    {
+        if (currentPreviewInstance != null)
+        {
+            Destroy(currentPreviewInstance);
+            currentPreviewInstance = null;
+        }
+    }
+
+    IEnumerator PopIn(Transform t, Vector3 targetScale, float duration)
+    {
+        if (t == null) yield break;
+        float elapsed = 0f;
+        Vector3 start = Vector3.zero;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float p = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
+            t.localScale = Vector3.Lerp(start, targetScale, p);
+            yield return null;
+        }
+        t.localScale = targetScale;
+    }
+
+    // Nicely-formatted stats output.
+    // Prefers a fixed / logical order for common fields (rarity, level, hp, atk, def, spd),
+    // hides engine/internal fields (hideFlags) and empty description.
+    string FormatStats(object data)
     {
         if (data == null) return "";
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"Nível: {data.level}");
-        sb.AppendLine($"Raridade: {data.rarity}");
-        sb.AppendLine($"HP: {data.hp}");
-        sb.AppendLine($"ATK: {data.atk}");
-        sb.AppendLine($"DEF: {data.def}");
-        sb.AppendLine($"SPD: {data.spd}");
-        return sb.ToString();
-    }
-
-    string BuildDebugLog(CharacterData d)
-    {
-        if (d == null) return "CharacterData: null";
-        var sb = new StringBuilder();
-        sb.AppendLine("CharacterData dump:");
-        sb.AppendLine($"  id: {d.characterId}");
-        sb.AppendLine($"  name: {d.displayName}");
-        sb.AppendLine($"  rarity: {d.rarity} ({(int)d.rarity})");
-        sb.AppendLine($"  level: {d.level}");
-        sb.AppendLine($"  hp: {d.hp}");
-        sb.AppendLine($"  atk: {d.atk}");
-        sb.AppendLine($"  def: {d.def}");
-        sb.AppendLine($"  spd: {d.spd}");
-        sb.AppendLine($"  prefab3D: {(d.prefab3D != null ? d.prefab3D.name : "null")}");
-        sb.AppendLine($"  sprite: {(d.sprite != null ? d.sprite.name : "null")}");
-        return sb.ToString();
-    }
-
-    Color RarityToColor(Rarity r)
-    {
-        switch (r)
+        // helper to fetch either property or field value (null if not found)
+        object GetMemberValue(string name)
         {
-            case Rarity.Common:    return new Color(0.9f, 0.9f, 0.9f);
-            case Rarity.Uncommon:  return new Color(0.3f, 0.8f, 0.3f);
-            case Rarity.Rare:      return new Color(0.25f, 0.5f, 1f);
-            case Rarity.Epic:      return new Color(0.6f, 0.2f, 0.9f);
-            case Rarity.Legendary: return new Color(1f, 0.7f, 0.15f);
-            default: return Color.white;
+            var type = data.GetType();
+            // property
+            var p = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            if (p != null && p.CanRead)
+            {
+                try { return p.GetValue(data); } catch { return null; }
+            }
+            // field
+            var f = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            if (f != null)
+            {
+                try { return f.GetValue(data); } catch { return null; }
+            }
+            return null;
         }
-    }
 
-    void OnDestroy()
-    {
-        if (previewHandle != null)
+        var sb = new StringBuilder();
+
+        // Optional: show characterId (if present)
+        var charId = GetMemberValue("characterId") ?? GetMemberValue("id");
+        if (charId != null)
         {
-            PreviewRenderer.Instance?.ReleasePreview(previewHandle);
-            previewHandle = null;
+            sb.AppendLine($"ID: {charId}");
         }
-        if (Instance == this) Instance = null;
+
+        // Preferred order
+        var preferred = new List<string> { "rarity", "level", "hp", "atk", "def", "spd" };
+
+        foreach (var key in preferred)
+        {
+            var val = GetMemberValue(key);
+            if (val == null) continue;
+
+            // skip zero/empty values for some fields? keep as-is for clarity
+            string label = key.ToUpper();
+            // nicer labels for certain keys
+            if (key.Equals("hp", System.StringComparison.OrdinalIgnoreCase)) label = "HP";
+            else if (key.Equals("atk", System.StringComparison.OrdinalIgnoreCase)) label = "ATK";
+            else if (key.Equals("def", System.StringComparison.OrdinalIgnoreCase)) label = "DEF";
+            else if (key.Equals("spd", System.StringComparison.OrdinalIgnoreCase)) label = "SPD";
+            else if (key.Equals("level", System.StringComparison.OrdinalIgnoreCase)) label = "Level";
+            else if (key.Equals("rarity", System.StringComparison.OrdinalIgnoreCase)) label = "Rarity";
+
+            sb.AppendLine($"{label}: {val}");
+        }
+
+        // Description (only if non-empty)
+        var desc = GetMemberValue("description") as string;
+        if (!string.IsNullOrEmpty(desc))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Description:");
+            sb.AppendLine(desc);
+        }
+
+        // If we already have useful output, return it
+        var outStr = sb.ToString().TrimEnd();
+        if (!string.IsNullOrEmpty(outStr))
+            return outStr;
+
+        // Fallback: reflection enumerate public primitive-like properties/fields, excluding engine/internal ones
+        var typeFallback = data.GetType();
+        var exclude = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            "hideFlags", "gameObject", "transform", "sprite", "prefab3D", "displayName", "name"
+        };
+
+        var sb2 = new StringBuilder();
+
+        var props = typeFallback.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+        foreach (var p in props)
+        {
+            if (!p.CanRead) continue;
+            if (exclude.Contains(p.Name)) continue;
+            object val = null;
+            try { val = p.GetValue(data); } catch { continue; }
+            if (val == null) continue;
+            var pt = p.PropertyType;
+            if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || pt.IsValueType)
+                sb2.AppendLine($"{p.Name}: {val}");
+        }
+
+        var fields = typeFallback.GetFields(BindingFlags.Instance | BindingFlags.Public);
+        foreach (var f in fields)
+        {
+            if (exclude.Contains(f.Name)) continue;
+            object val = null;
+            try { val = f.GetValue(data); } catch { continue; }
+            if (val == null) continue;
+            var ft = f.FieldType;
+            if (ft.IsPrimitive || ft.IsEnum || ft == typeof(string) || ft.IsValueType)
+                sb2.AppendLine($"{f.Name}: {val}");
+        }
+
+        outStr = sb2.ToString().TrimEnd();
+        return string.IsNullOrEmpty(outStr) ? "(no stats)" : outStr;
     }
 }

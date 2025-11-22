@@ -391,15 +391,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   panelRoot: {fileID: 407002686}
-  bigPreviewRaw: {fileID: 1246295786}
   iconImage: {fileID: 0}
   nameText: {fileID: 931955237}
-  rarityText: {fileID: 889410981}
   statsText: {fileID: 889410981}
-  descriptionText: {fileID: 0}
   closeButton: {fileID: 1754745320}
-  previewSize: 512
-  modelPreviewScale: 1.4
+  results3DParent: {fileID: 0}
+  previewSpawnPoint: {fileID: 0}
+  previewScale: 1
+  enable3DPreview: 0
 --- !u!114 &407002689
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2205,10 +2204,7 @@ MonoBehaviour:
   resultsContainer: {fileID: 6074769930740472959}
   resultSlotPrefab: {fileID: 2629021357394301047, guid: ffe044c1e203fee49bd9418983aab138, type: 3}
   resultsScrollRect: {fileID: 2648635287098047322}
-  heroPreviewPanel: {fileID: 407002686}
-  heroPreviewIcon: {fileID: 0}
-  heroPreviewName: {fileID: 931955237}
-  heroPreviewCloseButton: {fileID: 1754745320}
+  heroPreviewPanelComponent: {fileID: 407002688}
   results3DParent: {fileID: 1100809617}
   previewSpawnPoint: {fileID: 877461776}
   previewSpacing: 1.2

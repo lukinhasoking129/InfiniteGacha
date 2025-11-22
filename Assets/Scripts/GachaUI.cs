@@ -4,9 +4,9 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 
-/// GachaUI - manages gacha UI, result slots and hero preview panel.
-/// This version includes fixes to ensure the "Visualizar" button responds on first click
-/// by forcing layout rebuild and adding a PointerDown EventTrigger fallback.
+/// GachaUI - gerencia UI do gacha, criação de slots e integração com HeroPreviewPanel.
+/// - Usa heroPreviewPanelComponent.Show(data) para abrir o painel (assim integra com seu script existente).
+/// - Mantém correções para primeiro clique (Layout rebuild + PointerDown fallback).
 public class GachaUI : MonoBehaviour
 {
     [Header("Managers & Data")]
@@ -19,15 +19,13 @@ public class GachaUI : MonoBehaviour
 
     [Header("UI References")]
     public Text gemsText;
-    public Transform resultsContainer;    // Content of the ScrollView (Grid Layout)
-    public GameObject resultSlotPrefab;   // Slot prefab (must contain ResultSlot or compatible elements)
+    public Transform resultsContainer;    // Content do ScrollView (Grid Layout)
+    public GameObject resultSlotPrefab;   // Prefab do slot (deve conter botão "View" ou equivalente)
     public ScrollRect resultsScrollRect;
 
-    [Header("Hero Preview Panel (UI)")]
-    public GameObject heroPreviewPanel;   // scene instance (drag the Hierarchy instance here)
-    public Image heroPreviewIcon;
-    public Text heroPreviewName;
-    public Button heroPreviewCloseButton;
+    [Header("Hero Preview Panel (component)")]
+    [Tooltip("Arraste a instância na cena que possui o componente HeroPreviewPanel.")]
+    public HeroPreviewPanel heroPreviewPanelComponent;
 
     [Header("3D preview (world)")]
     public Transform results3DParent;
@@ -41,16 +39,7 @@ public class GachaUI : MonoBehaviour
 
     void Awake()
     {
-        // Ensure hero preview panel starts closed (if assigned)
-        if (heroPreviewPanel != null)
-            heroPreviewPanel.SetActive(false);
-
-        // wire close button if available
-        if (heroPreviewCloseButton != null)
-        {
-            heroPreviewCloseButton.onClick.RemoveAllListeners();
-            heroPreviewCloseButton.onClick.AddListener(CloseHeroPreviewPanel);
-        }
+        // não mexe no painel aqui — deixa o HeroPreviewPanel cuidar do seu estado
     }
 
     void Start()
@@ -60,6 +49,7 @@ public class GachaUI : MonoBehaviour
         if (resultsContainer == null) Debug.LogWarning("GachaUI: resultsContainer not assigned.");
         if (resultSlotPrefab == null) Debug.LogWarning("GachaUI: resultSlotPrefab not assigned.");
         if (resultsScrollRect == null) Debug.LogWarning("GachaUI: resultsScrollRect not assigned.");
+        if (heroPreviewPanelComponent == null) Debug.LogWarning("GachaUI: heroPreviewPanelComponent not assigned (drag the panel instance).");
     }
 
     void Update()
@@ -68,7 +58,9 @@ public class GachaUI : MonoBehaviour
             gemsText.text = $"Gems: {currency.gems}";
     }
 
-    // Public UI hooks
+    // ------------------------
+    // Pull buttons
+    // ------------------------
     public void OnPullOnce()
     {
         if (currency == null || gacha == null) return;
@@ -94,7 +86,9 @@ public class GachaUI : MonoBehaviour
         HandleResults(results);
     }
 
-    // Core flow
+    // ------------------------
+    // Processa resultados
+    // ------------------------
     void HandleResults(List<CharacterData> results)
     {
         if (results == null || results.Count == 0)
@@ -104,7 +98,7 @@ public class GachaUI : MonoBehaviour
         }
 
         AppendResultsUI(results);
-        ShowResults3D(results); // keep original behavior (world previews)
+        ShowResults3D(results); // comportamento original: spawn 3D no mundo
         if (inventory != null)
         {
             foreach (var r in results)
@@ -112,7 +106,9 @@ public class GachaUI : MonoBehaviour
         }
     }
 
-    // Append UI slots (improved to avoid first-click ignored)
+    // ------------------------
+    // Append UI slots (com correções para primeiro clique)
+    // ------------------------
     void AppendResultsUI(List<CharacterData> results)
     {
         if (resultsContainer == null || resultSlotPrefab == null)
@@ -127,7 +123,7 @@ public class GachaUI : MonoBehaviour
             var go = Instantiate(resultSlotPrefab, resultsContainer, false);
             go.transform.localScale = Vector3.one;
 
-            // try to use ResultSlot if present
+            // usa ResultSlot se existir
             var slotComp = go.GetComponent<ResultSlot>();
             if (slotComp != null)
             {
@@ -135,58 +131,61 @@ public class GachaUI : MonoBehaviour
             }
             else
             {
-                // fallback fill image/text
+                // fallback: preenche texto/imagem
                 var txt = go.GetComponentInChildren<Text>();
                 var img = go.GetComponentInChildren<Image>();
                 if (txt != null) txt.text = data?.displayName ?? "(no name)";
                 if (img != null && data?.sprite != null) img.sprite = data.sprite;
             }
 
-            // Force layout to be up-to-date so clicks are not consumed by layout changes
+            // garante layout atualizado para evitar consumo do primeiro clique
             Canvas.ForceUpdateCanvases();
             var rect = resultsContainer as RectTransform;
             if (rect != null)
                 UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
 
-            // find the specific "View" button (prefer by name to avoid picking e.g. Pull buttons)
+            // encontra botão "View" por nome ou pega primeiro Button filho
             Button viewBtn = FindButtonByName(go, "ViewButton") ?? go.GetComponentInChildren<Button>();
             if (viewBtn != null)
             {
-                // ensure interactable
                 viewBtn.interactable = true;
 
-                // remove previous runtime listeners and add ours
+                // remove listeners antigos e adiciona o nosso (captura a variável local)
                 viewBtn.onClick.RemoveAllListeners();
-                CharacterData captured = data; // capture local for closure
+                CharacterData captured = data;
                 viewBtn.onClick.AddListener(() =>
                 {
                     Debug.Log($"ViewButton onClick invoked for '{(captured == null ? "null" : captured.displayName)}'");
-                    OpenHeroPreviewPanel(captured);
+                    if (heroPreviewPanelComponent != null)
+                        heroPreviewPanelComponent.Show(captured);
+                    else
+                        Debug.LogWarning("heroPreviewPanelComponent not assigned on GachaUI.");
                 });
 
-                // disable automatic navigation to avoid first-click selection behavior
+                // desativa navigation para evitar "selecionar no primeiro clique"
                 var nav = viewBtn.navigation;
                 nav.mode = Navigation.Mode.None;
                 viewBtn.navigation = nav;
 
-                // Add EventTrigger PointerDown to ensure immediate response (helpful inside ScrollRect / touch)
+                // adiciona EventTrigger.PointerDown para resposta imediata em ScrollRect/touch
                 var trigger = viewBtn.gameObject.GetComponent<EventTrigger>();
                 if (trigger == null) trigger = viewBtn.gameObject.AddComponent<EventTrigger>();
 
-                // remove existing PointerDown entries to avoid duplicates
-                trigger.triggers.RemoveAll(entry => entry.eventID == EventTriggerType.PointerDown);
+                // remove entradas PointerDown antigas
+                trigger.triggers.RemoveAll(e => e.eventID == EventTriggerType.PointerDown);
 
                 var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
                 entry.callback.AddListener((eventData) =>
                 {
                     Debug.Log($"ViewButton PointerDown invoked for '{(captured == null ? "null" : captured.displayName)}'");
-                    OpenHeroPreviewPanel(captured);
+                    if (heroPreviewPanelComponent != null)
+                        heroPreviewPanelComponent.Show(captured);
                 });
                 trigger.triggers.Add(entry);
             }
         }
 
-        // force layout rebuild and scroll
+        // rebuild final e rolar
         var rectFinal = resultsContainer as RectTransform;
         if (rectFinal != null)
             UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rectFinal);
@@ -203,111 +202,9 @@ public class GachaUI : MonoBehaviour
         yield return null;
     }
 
-    // Hero preview UI
-    public void OpenHeroPreviewPanel(CharacterData data)
-    {
-        Debug.Log($"OpenHeroPreviewPanel called for '{(data == null ? "null" : data.displayName)}'");
-
-        if (heroPreviewPanel == null)
-        {
-            Debug.LogWarning("OpenHeroPreviewPanel: heroPreviewPanel not assigned in Inspector.");
-            return;
-        }
-
-        // populate content
-        if (heroPreviewIcon != null)
-        {
-            if (data != null && data.sprite != null)
-            {
-                heroPreviewIcon.sprite = data.sprite;
-                heroPreviewIcon.color = Color.white;
-            }
-            else
-            {
-                heroPreviewIcon.sprite = null;
-                heroPreviewIcon.color = new Color(1,1,1,0);
-            }
-        }
-
-        if (heroPreviewName != null)
-            heroPreviewName.text = data?.displayName ?? "(no name)";
-
-        // show panel and bring to front
-        heroPreviewPanel.SetActive(true);
-        heroPreviewPanel.transform.SetAsLastSibling();
-
-        // ensure visible if CanvasGroup or Canvas ordering interferes
-        var cg = heroPreviewPanel.GetComponent<CanvasGroup>();
-        if (cg != null)
-        {
-            cg.alpha = 1f;
-            cg.interactable = true;
-            cg.blocksRaycasts = true;
-        }
-        var parentCanvas = heroPreviewPanel.GetComponentInParent<Canvas>();
-        if (parentCanvas != null)
-        {
-            parentCanvas.overrideSorting = true;
-            parentCanvas.sortingOrder = 1000;
-        }
-    }
-
-    // Debug version that logs more info and forces visibility (use only while debugging)
-    public void OpenHeroPreviewPanel_Debug(CharacterData data)
-    {
-        Debug.Log($"OpenHeroPreviewPanel_Debug called for '{(data == null ? "null" : data.displayName)}'");
-
-        if (heroPreviewPanel == null)
-        {
-            Debug.LogWarning("OpenHeroPreviewPanel_Debug: heroPreviewPanel IS NULL in Inspector!");
-            return;
-        }
-
-        RectTransform rt = heroPreviewPanel.GetComponent<RectTransform>();
-        CanvasGroup cg = heroPreviewPanel.GetComponent<CanvasGroup>();
-        Canvas parentCanvas = heroPreviewPanel.GetComponentInParent<Canvas>();
-
-        Debug.Log($"Before: activeSelf={heroPreviewPanel.activeSelf} activeInHierarchy={heroPreviewPanel.activeInHierarchy} parent={(heroPreviewPanel.transform.parent ? heroPreviewPanel.transform.parent.name : "null")}");
-        if (rt != null)
-            Debug.Log($"RectTransform: localScale={rt.localScale} anchoredPosition={rt.anchoredPosition} sizeDelta={rt.sizeDelta}");
-        Debug.Log($"CanvasGroup: {(cg == null ? "null" : $"alpha={cg.alpha} interactable={cg.interactable} blocks={cg.blocksRaycasts}")}");
-        if (parentCanvas == null)
-            Debug.Log("Parent Canvas: null");
-        else
-            Debug.Log($"Parent Canvas: {parentCanvas.name} sort={parentCanvas.sortingOrder}");
-
-        // force show
-        heroPreviewPanel.SetActive(true);
-        if (rt != null) rt.localScale = Vector3.one;
-        heroPreviewPanel.transform.SetAsLastSibling();
-
-        if (parentCanvas != null)
-        {
-            parentCanvas.overrideSorting = true;
-            parentCanvas.sortingOrder = 9999;
-            Debug.Log("Forced parentCanvas.overrideSorting=true and sortingOrder=9999");
-        }
-
-        if (cg != null)
-        {
-            cg.alpha = 1f;
-            cg.interactable = true;
-            cg.blocksRaycasts = true;
-        }
-
-        Debug.Log($"After: activeSelf={heroPreviewPanel.activeSelf} activeInHierarchy={heroPreviewPanel.activeInHierarchy} siblingIndex={heroPreviewPanel.transform.GetSiblingIndex()}");
-        if (heroPreviewIcon != null) Debug.Log($"heroPreviewIcon assigned? {(heroPreviewIcon.sprite == null ? "NO sprite" : "has sprite")}");
-    }
-
-    public void CloseHeroPreviewPanel()
-    {
-        if (heroPreviewPanel != null)
-            heroPreviewPanel.SetActive(false);
-
-        Clear3DPreview();
-    }
-
-    // World previews (kept as original behavior)
+    // ------------------------
+    // World previews (comportamento original)
+    // ------------------------
     void ShowResults3D(List<CharacterData> results)
     {
         if (results == null || results.Count == 0) return;
@@ -322,7 +219,7 @@ public class GachaUI : MonoBehaviour
         if (results3DParent != null && results3DParent.localScale == Vector3.zero)
             Debug.LogWarning("ShowResults3D: results3DParent localScale=(0,0,0). Set to (1,1,1).");
 
-        // clear old
+        // limpa previews antigos
         if (results3DParent != null)
         {
             for (int i = results3DParent.childCount - 1; i >= 0; i--)
@@ -365,7 +262,7 @@ public class GachaUI : MonoBehaviour
 
             instance.transform.localScale = Vector3.one * previewScale;
 
-            // look at camera yaw only
+            // look yaw to camera
             if (cam != null)
             {
                 Vector3 dir = cam.transform.position - instance.transform.position;
@@ -377,7 +274,6 @@ public class GachaUI : MonoBehaviour
             var cols = instance.GetComponentsInChildren<Collider>();
             foreach (var c in cols) c.enabled = false;
 
-            // pop-in animation
             instance.transform.localScale = Vector3.zero;
             StartCoroutine(PopIn(instance.transform, Vector3.one * previewScale, 0.12f + i * 0.03f));
         }
@@ -399,8 +295,8 @@ public class GachaUI : MonoBehaviour
         t.localScale = targetScale;
     }
 
-    // single preview from button (world-space)
-    public void Show3DPreview(CharacterData data)
+    // single preview from external calls (shows panel via component)
+    public void Show3DPreviewInWorld(CharacterData data)
     {
         Camera cam = Camera.main;
         Vector3 spawnPos = previewSpawnPoint != null ? previewSpawnPoint.position :
@@ -408,7 +304,7 @@ public class GachaUI : MonoBehaviour
 
         if (data == null || data.prefab3D == null)
         {
-            Debug.Log("Show3DPreview: data is null or prefab3D missing.");
+            Debug.Log("Show3DPreviewInWorld: data is null or prefab3D missing.");
             return;
         }
 
@@ -446,7 +342,13 @@ public class GachaUI : MonoBehaviour
         }
     }
 
-    // Helper: try to find a button by child name inside slot; returns first child Button matching name
+    // Close hero preview (delegates to component)
+    public void CloseHeroPreviewPanel()
+    {
+        if (heroPreviewPanelComponent != null) heroPreviewPanelComponent.Hide();
+    }
+
+    // Helper: find a Button by child name
     private Button FindButtonByName(GameObject root, string name)
     {
         if (root == null || string.IsNullOrEmpty(name)) return null;
