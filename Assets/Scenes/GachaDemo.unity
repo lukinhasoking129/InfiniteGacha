@@ -394,6 +394,8 @@ MonoBehaviour:
   iconImage: {fileID: 0}
   nameText: {fileID: 931955237}
   statsText: {fileID: 889410981}
+  bigPreviewRaw: {fileID: 1246295786}
+  bigPreviewMaxSize: 320
   closeButton: {fileID: 1754745320}
   results3DParent: {fileID: 0}
   previewSpawnPoint: {fileID: 0}

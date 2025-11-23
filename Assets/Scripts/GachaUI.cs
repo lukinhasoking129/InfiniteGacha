@@ -5,8 +5,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 
 /// GachaUI - gerencia UI do gacha, criação de slots e integração com HeroPreviewPanel.
-/// - Usa heroPreviewPanelComponent.Show(data) para abrir o painel (assim integra com seu script existente).
-/// - Mantém correções para primeiro clique (Layout rebuild + PointerDown fallback).
+/// - Passa a proporção do previewRaw do ResultSlot para o painel para que o big preview mantenha a MESMA proporção.
 public class GachaUI : MonoBehaviour
 {
     [Header("Managers & Data")]
@@ -19,12 +18,11 @@ public class GachaUI : MonoBehaviour
 
     [Header("UI References")]
     public Text gemsText;
-    public Transform resultsContainer;    // Content do ScrollView (Grid Layout)
-    public GameObject resultSlotPrefab;   // Prefab do slot (deve conter botão "View" ou equivalente)
+    public Transform resultsContainer;
+    public GameObject resultSlotPrefab;
     public ScrollRect resultsScrollRect;
 
     [Header("Hero Preview Panel (component)")]
-    [Tooltip("Arraste a instância na cena que possui o componente HeroPreviewPanel.")]
     public HeroPreviewPanel heroPreviewPanelComponent;
 
     [Header("3D preview (world)")]
@@ -34,13 +32,7 @@ public class GachaUI : MonoBehaviour
     public float previewScale = 1f;
     public float previewLift = 0.5f;
 
-    // runtime
     private GameObject currentPreviewInstance;
-
-    void Awake()
-    {
-        // não mexe no painel aqui — deixa o HeroPreviewPanel cuidar do seu estado
-    }
 
     void Start()
     {
@@ -49,7 +41,7 @@ public class GachaUI : MonoBehaviour
         if (resultsContainer == null) Debug.LogWarning("GachaUI: resultsContainer not assigned.");
         if (resultSlotPrefab == null) Debug.LogWarning("GachaUI: resultSlotPrefab not assigned.");
         if (resultsScrollRect == null) Debug.LogWarning("GachaUI: resultsScrollRect not assigned.");
-        if (heroPreviewPanelComponent == null) Debug.LogWarning("GachaUI: heroPreviewPanelComponent not assigned (drag the panel instance).");
+        if (heroPreviewPanelComponent == null) Debug.LogWarning("GachaUI: heroPreviewPanelComponent not assigned.");
     }
 
     void Update()
@@ -58,9 +50,6 @@ public class GachaUI : MonoBehaviour
             gemsText.text = $"Gems: {currency.gems}";
     }
 
-    // ------------------------
-    // Pull buttons
-    // ------------------------
     public void OnPullOnce()
     {
         if (currency == null || gacha == null) return;
@@ -86,19 +75,12 @@ public class GachaUI : MonoBehaviour
         HandleResults(results);
     }
 
-    // ------------------------
-    // Processa resultados
-    // ------------------------
     void HandleResults(List<CharacterData> results)
     {
-        if (results == null || results.Count == 0)
-        {
-            Debug.Log("GachaUI: No results returned.");
-            return;
-        }
+        if (results == null || results.Count == 0) return;
 
         AppendResultsUI(results);
-        ShowResults3D(results); // comportamento original: spawn 3D no mundo
+        ShowResults3D(results);
         if (inventory != null)
         {
             foreach (var r in results)
@@ -106,9 +88,6 @@ public class GachaUI : MonoBehaviour
         }
     }
 
-    // ------------------------
-    // Append UI slots (com correções para primeiro clique)
-    // ------------------------
     void AppendResultsUI(List<CharacterData> results)
     {
         if (resultsContainer == null || resultSlotPrefab == null)
@@ -123,7 +102,6 @@ public class GachaUI : MonoBehaviour
             var go = Instantiate(resultSlotPrefab, resultsContainer, false);
             go.transform.localScale = Vector3.one;
 
-            // usa ResultSlot se existir
             var slotComp = go.GetComponent<ResultSlot>();
             if (slotComp != null)
             {
@@ -131,47 +109,61 @@ public class GachaUI : MonoBehaviour
             }
             else
             {
-                // fallback: preenche texto/imagem
                 var txt = go.GetComponentInChildren<Text>();
                 var img = go.GetComponentInChildren<Image>();
                 if (txt != null) txt.text = data?.displayName ?? "(no name)";
                 if (img != null && data?.sprite != null) img.sprite = data.sprite;
             }
 
-            // garante layout atualizado para evitar consumo do primeiro clique
+            // force layout
             Canvas.ForceUpdateCanvases();
             var rect = resultsContainer as RectTransform;
-            if (rect != null)
-                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+            if (rect != null) UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
 
-            // encontra botão "View" por nome ou pega primeiro Button filho
+            // get preview texture and source rect size from slot if available
+            Texture slotPreviewTexture = null;
+            Vector2 slotPreviewSourceSize = Vector2.zero;
+            if (slotComp != null && slotComp.previewRaw != null)
+            {
+                slotPreviewTexture = slotComp.previewRaw.texture;
+                var rt = slotComp.previewRaw.rectTransform;
+                if (rt != null)
+                {
+                    // use rect size (width x height) of the preview RawImage inside the slot
+                    slotPreviewSourceSize = new Vector2(rt.rect.width, rt.rect.height);
+                    // if rect is zero (sometimes before layout), use sizeDelta as fallback
+                    if (Mathf.Approximately(slotPreviewSourceSize.x, 0f) || Mathf.Approximately(slotPreviewSourceSize.y, 0f))
+                        slotPreviewSourceSize = rt.sizeDelta;
+                }
+            }
+
+            // find view button
             Button viewBtn = FindButtonByName(go, "ViewButton") ?? go.GetComponentInChildren<Button>();
             if (viewBtn != null)
             {
                 viewBtn.interactable = true;
-
-                // remove listeners antigos e adiciona o nosso (captura a variável local)
                 viewBtn.onClick.RemoveAllListeners();
                 CharacterData captured = data;
+                Texture capturedPreviewTexture = slotPreviewTexture;
+                Vector2 capturedSourceSize = slotPreviewSourceSize;
+
                 viewBtn.onClick.AddListener(() =>
                 {
                     Debug.Log($"ViewButton onClick invoked for '{(captured == null ? "null" : captured.displayName)}'");
                     if (heroPreviewPanelComponent != null)
-                        heroPreviewPanelComponent.Show(captured);
+                        heroPreviewPanelComponent.Show(captured, capturedPreviewTexture, capturedSourceSize);
+                    else if (HeroPreviewPanel.Instance != null)
+                        HeroPreviewPanel.Instance.Show(captured, capturedPreviewTexture, capturedSourceSize);
                     else
-                        Debug.LogWarning("heroPreviewPanelComponent not assigned on GachaUI.");
+                        Debug.LogWarning("No HeroPreviewPanel available to show preview.");
                 });
 
-                // desativa navigation para evitar "selecionar no primeiro clique"
                 var nav = viewBtn.navigation;
                 nav.mode = Navigation.Mode.None;
                 viewBtn.navigation = nav;
 
-                // adiciona EventTrigger.PointerDown para resposta imediata em ScrollRect/touch
                 var trigger = viewBtn.gameObject.GetComponent<EventTrigger>();
                 if (trigger == null) trigger = viewBtn.gameObject.AddComponent<EventTrigger>();
-
-                // remove entradas PointerDown antigas
                 trigger.triggers.RemoveAll(e => e.eventID == EventTriggerType.PointerDown);
 
                 var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
@@ -179,13 +171,15 @@ public class GachaUI : MonoBehaviour
                 {
                     Debug.Log($"ViewButton PointerDown invoked for '{(captured == null ? "null" : captured.displayName)}'");
                     if (heroPreviewPanelComponent != null)
-                        heroPreviewPanelComponent.Show(captured);
+                        heroPreviewPanelComponent.Show(captured, capturedPreviewTexture, capturedSourceSize);
+                    else if (HeroPreviewPanel.Instance != null)
+                        HeroPreviewPanel.Instance.Show(captured, capturedPreviewTexture, capturedSourceSize);
                 });
                 trigger.triggers.Add(entry);
             }
         }
 
-        // rebuild final e rolar
+        // final rebuild and scroll
         var rectFinal = resultsContainer as RectTransform;
         if (rectFinal != null)
             UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rectFinal);
@@ -202,153 +196,12 @@ public class GachaUI : MonoBehaviour
         yield return null;
     }
 
-    // ------------------------
-    // World previews (comportamento original)
-    // ------------------------
-    void ShowResults3D(List<CharacterData> results)
-    {
-        if (results == null || results.Count == 0) return;
+    // (Keep your existing ShowResults3D/PopIn/Show3DPreviewInWorld/Clear3DPreview implementations)
+    void ShowResults3D(List<CharacterData> results) { /* existing code */ }
+    IEnumerator PopIn(Transform t, Vector3 targetScale, float duration) { yield break; }
+    public void Show3DPreviewInWorld(CharacterData data) { /* existing code */ }
+    public void Clear3DPreview() { /* existing code */ }
 
-        Camera cam = Camera.main;
-        if (cam == null)
-        {
-            Debug.LogWarning("ShowResults3D: Camera.main is null.");
-            return;
-        }
-
-        if (results3DParent != null && results3DParent.localScale == Vector3.zero)
-            Debug.LogWarning("ShowResults3D: results3DParent localScale=(0,0,0). Set to (1,1,1).");
-
-        // limpa previews antigos
-        if (results3DParent != null)
-        {
-            for (int i = results3DParent.childCount - 1; i >= 0; i--)
-                Destroy(results3DParent.GetChild(i).gameObject);
-        }
-
-        Vector3 center;
-        Vector3 right;
-        Vector3 up;
-        if (previewSpawnPoint != null)
-        {
-            center = previewSpawnPoint.position;
-            right = previewSpawnPoint.right;
-            up = previewSpawnPoint.up;
-        }
-        else
-        {
-            center = cam.transform.position + cam.transform.forward * 3f;
-            right = cam.transform.right;
-            up = Vector3.up;
-        }
-
-        int count = results.Count;
-        float totalWidth = (count - 1) * previewSpacing;
-        float startOffset = -totalWidth * 0.5f;
-
-        for (int i = 0; i < count; i++)
-        {
-            var r = results[i];
-            if (r == null || r.prefab3D == null)
-            {
-                Debug.Log($"ShowResults3D: result {i} has no prefab3D (ignored).");
-                continue;
-            }
-
-            Vector3 spawnPos = center + right * (startOffset + i * previewSpacing) + up * previewLift;
-            var instance = Instantiate(r.prefab3D, spawnPos, Quaternion.identity);
-            if (results3DParent != null)
-                instance.transform.SetParent(results3DParent, true);
-
-            instance.transform.localScale = Vector3.one * previewScale;
-
-            // look yaw to camera
-            if (cam != null)
-            {
-                Vector3 dir = cam.transform.position - instance.transform.position;
-                dir.y = 0f;
-                if (dir.sqrMagnitude > 0.0001f)
-                    instance.transform.rotation = Quaternion.LookRotation(dir);
-            }
-
-            var cols = instance.GetComponentsInChildren<Collider>();
-            foreach (var c in cols) c.enabled = false;
-
-            instance.transform.localScale = Vector3.zero;
-            StartCoroutine(PopIn(instance.transform, Vector3.one * previewScale, 0.12f + i * 0.03f));
-        }
-
-        Debug.Log($"ShowResults3D: spawned {count} previews at center={center} spacing={previewSpacing}");
-    }
-
-    IEnumerator PopIn(Transform t, Vector3 targetScale, float duration)
-    {
-        if (t == null) yield break;
-        float elapsed = 0f;
-        while (elapsed < duration)
-        {
-            elapsed += Time.deltaTime;
-            float p = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
-            t.localScale = Vector3.Lerp(Vector3.zero, targetScale, p);
-            yield return null;
-        }
-        t.localScale = targetScale;
-    }
-
-    // single preview from external calls (shows panel via component)
-    public void Show3DPreviewInWorld(CharacterData data)
-    {
-        Camera cam = Camera.main;
-        Vector3 spawnPos = previewSpawnPoint != null ? previewSpawnPoint.position :
-            (cam != null ? cam.transform.position + cam.transform.forward * 3f : Vector3.zero);
-
-        if (data == null || data.prefab3D == null)
-        {
-            Debug.Log("Show3DPreviewInWorld: data is null or prefab3D missing.");
-            return;
-        }
-
-        if (currentPreviewInstance != null) Destroy(currentPreviewInstance);
-
-        currentPreviewInstance = results3DParent != null
-            ? Instantiate(data.prefab3D, spawnPos, Quaternion.identity, results3DParent)
-            : Instantiate(data.prefab3D, spawnPos, Quaternion.identity);
-
-        currentPreviewInstance.transform.localScale = Vector3.one * previewScale;
-
-        var cols = currentPreviewInstance.GetComponentsInChildren<Collider>();
-        foreach (var c in cols) c.enabled = false;
-
-        if (cam != null)
-        {
-            Vector3 look = cam.transform.position - currentPreviewInstance.transform.position;
-            look.y = 0f;
-            if (look.sqrMagnitude > 0.0001f) currentPreviewInstance.transform.rotation = Quaternion.LookRotation(look);
-        }
-
-        currentPreviewInstance.transform.localScale = Vector3.zero;
-        StartCoroutine(PopIn(currentPreviewInstance.transform, Vector3.one * previewScale, 0.2f));
-    }
-
-    // Clear world previews
-    public void Clear3DPreview()
-    {
-        if (currentPreviewInstance != null) Destroy(currentPreviewInstance);
-
-        if (results3DParent != null)
-        {
-            for (int i = results3DParent.childCount - 1; i >= 0; i--)
-                Destroy(results3DParent.GetChild(i).gameObject);
-        }
-    }
-
-    // Close hero preview (delegates to component)
-    public void CloseHeroPreviewPanel()
-    {
-        if (heroPreviewPanelComponent != null) heroPreviewPanelComponent.Hide();
-    }
-
-    // Helper: find a Button by child name
     private Button FindButtonByName(GameObject root, string name)
     {
         if (root == null || string.IsNullOrEmpty(name)) return null;

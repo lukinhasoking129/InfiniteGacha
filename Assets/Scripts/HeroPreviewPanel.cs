@@ -7,9 +7,9 @@ using UnityEngine.UI;
 
 /// HeroPreviewPanel
 /// - Gerencia o painel modal de preview do herói.
-/// - Popula ícone, nome e stats (usa reflexão para montar os stats automaticamente).
-/// - Opcionalmente instancia um preview 3D (prefab) dentro de results3DParent.
-/// - Expõe um singleton Instance para compatibilidade com chamadas antigas.
+/// - Popula ícone, nome, stats e um preview grande (RawImage).
+/// - Mantém a proporção (aspect ratio) da textura exibida no bigPreviewRaw,
+///   preferindo a proporção do preview do slot quando fornecida.
 public class HeroPreviewPanel : MonoBehaviour
 {
     // Singleton (compatibilidade)
@@ -25,23 +25,22 @@ public class HeroPreviewPanel : MonoBehaviour
     [Tooltip("Texto do nome do herói.")]
     public Text nameText;
 
-    [Tooltip("Texto que exibirá os stats (pode ficar em branco se você não quiser).")]
+    [Tooltip("Texto que exibirá os stats.")]
     public Text statsText;
+
+    [Tooltip("RawImage grande dentro do painel para mostrar preview (arraste aqui).")]
+    public RawImage bigPreviewRaw;
+
+    [Tooltip("Tamanho máximo (px) do lado maior do bigPreviewRaw.")]
+    public int bigPreviewMaxSize = 320;
 
     [Tooltip("Botão fechar do painel (opcional).")]
     public Button closeButton;
 
     [Header("Preview 3D (opcional)")]
-    [Tooltip("Parent onde instanciar o modelo 3D para preview (opcional).")]
     public Transform results3DParent;
-
-    [Tooltip("Ponto de spawn local/world (usado se results3DParent for nulo).")]
     public Transform previewSpawnPoint;
-
-    [Tooltip("Escala aplicada ao preview 3D instanciado.")]
     public float previewScale = 1f;
-
-    [Tooltip("Se true, o painel instancia o prefab3D (se existir) ao abrir.")]
     public bool enable3DPreview = false;
 
     // runtime
@@ -81,8 +80,15 @@ public class HeroPreviewPanel : MonoBehaviour
         if (Instance == this) Instance = null;
     }
 
-    /// Show: abre o painel e popula com os dados fornecidos.
+    // Backwards-compatible Show
     public void Show(CharacterData data)
+    {
+        Show(data, null, Vector2.zero);
+    }
+
+    // Show accepting optional preview texture and optional sourceSize (width, height) to preserve same aspect.
+    // sourceSize: if non-zero, its aspect ratio is preferred (useful to match the ResultSlot preview rect).
+    public void Show(CharacterData data, Texture previewTexture, Vector2 sourceSize)
     {
         if (panelRoot == null)
         {
@@ -90,7 +96,7 @@ public class HeroPreviewPanel : MonoBehaviour
             return;
         }
 
-        Populate(data);
+        Populate(data, previewTexture, sourceSize);
 
         panelRoot.SetActive(true);
         panelRoot.transform.SetAsLastSibling();
@@ -101,7 +107,6 @@ public class HeroPreviewPanel : MonoBehaviour
         }
     }
 
-    /// Hide: fecha o painel e limpa qualquer preview 3D criado
     public void Hide()
     {
         if (panelRoot != null)
@@ -110,8 +115,7 @@ public class HeroPreviewPanel : MonoBehaviour
         Clear3DPreview();
     }
 
-    /// Populate: preenche os campos do painel com os dados do CharacterData
-    void Populate(CharacterData data)
+    void Populate(CharacterData data, Texture previewTexture, Vector2 sourceSize)
     {
         // Icon
         if (iconImage != null)
@@ -132,29 +136,116 @@ public class HeroPreviewPanel : MonoBehaviour
         if (nameText != null)
             nameText.text = data?.displayName ?? "(sem nome)";
 
-        // Stats (formatted, prefer ordered presentation)
+        // Stats
         if (statsText != null)
-        {
             statsText.text = FormatStats(data);
+
+        // Big preview: set texture and respect aspect ratio.
+        if (bigPreviewRaw != null)
+        {
+            Texture used = null;
+            if (previewTexture != null)
+                used = previewTexture;
+            else if (data != null && data.sprite != null)
+                used = data.sprite.texture;
+
+            SetBigPreviewTexture(used, sourceSize);
         }
     }
 
-    /// Cria um preview 3D simples: instancia prefab, parenta em results3DParent (se houver) e aplica scale/rot.
+    /// Sets the texture on bigPreviewRaw and resizes the RectTransform preserving aspect ratio.
+    /// If sourceSize has positive components, those are used to compute the aspect (this matches the slot rect).
+    void SetBigPreviewTexture(Texture tex, Vector2 sourceSize)
+    {
+        if (bigPreviewRaw == null) return;
+
+        if (tex == null)
+        {
+            // hide the raw image if no texture
+            bigPreviewRaw.texture = null;
+            bigPreviewRaw.color = new Color(1,1,1,0f);
+            var le0 = bigPreviewRaw.GetComponent<LayoutElement>();
+            if (le0 != null)
+            {
+                le0.ignoreLayout = true;
+                le0.preferredWidth = 0;
+                le0.preferredHeight = 0;
+            }
+            return;
+        }
+
+        bigPreviewRaw.texture = tex;
+        bigPreviewRaw.color = Color.white;
+
+        // Determine aspect using sourceSize if provided, otherwise use texture pixel size
+        float srcW = 0f, srcH = 0f;
+        if (sourceSize.x > 0.001f && sourceSize.y > 0.001f)
+        {
+            srcW = sourceSize.x;
+            srcH = sourceSize.y;
+        }
+        else
+        {
+            srcW = Mathf.Max(1, tex.width);
+            srcH = Mathf.Max(1, tex.height);
+        }
+
+        float aspect = srcW / srcH;
+
+        // Compute new size so that the largest side equals bigPreviewMaxSize (but scale up if smaller? keep <= max)
+        float targetW, targetH;
+        if (srcW >= srcH)
+        {
+            targetW = Mathf.Min(bigPreviewMaxSize, srcW);
+            // scale factor based on srcW vs max - if srcW > max, shrink; if srcW <= max, keep srcW but we may want to scale up a bit — here we limit to max
+            float scale = (srcW > bigPreviewMaxSize) ? (bigPreviewMaxSize / srcW) : (bigPreviewMaxSize / srcW < 1f ? 1f : 1f);
+            targetW = srcW * scale;
+            targetH = targetW / aspect;
+        }
+        else
+        {
+            targetH = Mathf.Min(bigPreviewMaxSize, srcH);
+            float scale = (srcH > bigPreviewMaxSize) ? (bigPreviewMaxSize / srcH) : (bigPreviewMaxSize / srcH < 1f ? 1f : 1f);
+            targetH = srcH * scale;
+            targetW = targetH * aspect;
+        }
+
+        // Fallback ensure positive
+        if (targetW <= 0) targetW = Mathf.Min(bigPreviewMaxSize, tex.width);
+        if (targetH <= 0) targetH = Mathf.Min(bigPreviewMaxSize, tex.height);
+
+        // apply size to RectTransform
+        var rt = bigPreviewRaw.rectTransform;
+        if (rt != null)
+        {
+            rt.localScale = Vector3.one;
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, targetW);
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, targetH);
+        }
+
+        // ensure LayoutElement informs layout system
+        var le = bigPreviewRaw.GetComponent<LayoutElement>();
+        if (le == null) le = bigPreviewRaw.gameObject.AddComponent<LayoutElement>();
+        le.ignoreLayout = false;
+        le.preferredWidth = targetW;
+        le.preferredHeight = targetH;
+        le.minWidth = -1;
+        le.minHeight = -1;
+    }
+
+    // --- 3D preview helpers (inspired by previous implementation) ---
     void Create3DPreview(CharacterData data)
     {
-        Clear3DPreview(); // garante limpeza anterior
+        Clear3DPreview();
 
         Vector3 spawnPos;
         Quaternion spawnRot = Quaternion.identity;
 
         if (results3DParent != null)
-        {
             spawnPos = results3DParent.position;
-        }
         else if (previewSpawnPoint != null)
-        {
             spawnPos = previewSpawnPoint.position;
-        }
         else
         {
             var cam = Camera.main;
@@ -211,24 +302,19 @@ public class HeroPreviewPanel : MonoBehaviour
         t.localScale = targetScale;
     }
 
-    // Nicely-formatted stats output.
-    // Prefers a fixed / logical order for common fields (rarity, level, hp, atk, def, spd),
-    // hides engine/internal fields (hideFlags) and empty description.
+    // Nicely-formatted stats output as before
     string FormatStats(object data)
     {
         if (data == null) return "";
 
-        // helper to fetch either property or field value (null if not found)
         object GetMemberValue(string name)
         {
             var type = data.GetType();
-            // property
             var p = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
             if (p != null && p.CanRead)
             {
                 try { return p.GetValue(data); } catch { return null; }
             }
-            // field
             var f = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
             if (f != null)
             {
@@ -239,24 +325,17 @@ public class HeroPreviewPanel : MonoBehaviour
 
         var sb = new StringBuilder();
 
-        // Optional: show characterId (if present)
         var charId = GetMemberValue("characterId") ?? GetMemberValue("id");
         if (charId != null)
-        {
             sb.AppendLine($"ID: {charId}");
-        }
 
-        // Preferred order
         var preferred = new List<string> { "rarity", "level", "hp", "atk", "def", "spd" };
-
         foreach (var key in preferred)
         {
             var val = GetMemberValue(key);
             if (val == null) continue;
 
-            // skip zero/empty values for some fields? keep as-is for clarity
             string label = key.ToUpper();
-            // nicer labels for certain keys
             if (key.Equals("hp", System.StringComparison.OrdinalIgnoreCase)) label = "HP";
             else if (key.Equals("atk", System.StringComparison.OrdinalIgnoreCase)) label = "ATK";
             else if (key.Equals("def", System.StringComparison.OrdinalIgnoreCase)) label = "DEF";
@@ -267,7 +346,6 @@ public class HeroPreviewPanel : MonoBehaviour
             sb.AppendLine($"{label}: {val}");
         }
 
-        // Description (only if non-empty)
         var desc = GetMemberValue("description") as string;
         if (!string.IsNullOrEmpty(desc))
         {
@@ -276,12 +354,11 @@ public class HeroPreviewPanel : MonoBehaviour
             sb.AppendLine(desc);
         }
 
-        // If we already have useful output, return it
         var outStr = sb.ToString().TrimEnd();
         if (!string.IsNullOrEmpty(outStr))
             return outStr;
 
-        // Fallback: reflection enumerate public primitive-like properties/fields, excluding engine/internal ones
+        // Fallback generic listing
         var typeFallback = data.GetType();
         var exclude = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
         {
@@ -289,7 +366,6 @@ public class HeroPreviewPanel : MonoBehaviour
         };
 
         var sb2 = new StringBuilder();
-
         var props = typeFallback.GetProperties(BindingFlags.Instance | BindingFlags.Public);
         foreach (var p in props)
         {
