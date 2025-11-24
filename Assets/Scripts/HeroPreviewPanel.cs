@@ -9,9 +9,9 @@ using UnityEngine.UI;
 /// HeroPreviewPanel
 /// - Gerencia o painel modal de preview do herói.
 /// - Popula ícone, nome, stats e um preview grande (RawImage).
-/// - Pode ocultar/mostrar botões de Pull. Suporta lista explícita ou busca por nome.
+/// - Pode ocultar/mostrar botões de Pull e (NOVO) contador de gems quando o painel abre,
+///   e restaura o estado original quando fecha.
 /// - Três modos de ocultação: GameObject, Button component, CanvasGroup visual hide.
-/// - Restaura estados mesmo se o painel for desativado por outro código (OnDisable/OnDestroy).
 public class HeroPreviewPanel : MonoBehaviour
 {
     public static HeroPreviewPanel Instance { get; private set; }
@@ -39,6 +39,13 @@ public class HeroPreviewPanel : MonoBehaviour
     [Tooltip("Se verdadeiro, o painel tentará automaticamente esconder os botões de Pull ao abrir.")]
     public bool hidePullButtonsInPanel = true;
 
+    [Header("Gems counter hiding")]
+    [Tooltip("Arraste aqui o GameObject que representa o contador de gems (ou deixe vazio e o sistema tentará localizar automaticamente por nome contendo 'Gems').")]
+    public GameObject gemsCounterObject;
+
+    [Tooltip("Se verdadeiro, o painel tentará esconder o contador de gems ao abrir.")]
+    public bool hideGemsCounter = true;
+
     [Header("Preview 3D (opcional)")]
     public Transform results3DParent;
     public Transform previewSpawnPoint;
@@ -52,6 +59,10 @@ public class HeroPreviewPanel : MonoBehaviour
     private readonly Dictionary<GameObject, bool> _gameObjectActiveBefore = new Dictionary<GameObject, bool>();
     private readonly Dictionary<Button, bool> _buttonInteractableBefore = new Dictionary<Button, bool>();
     private readonly Dictionary<CanvasGroup, (float alpha, bool interactable, bool blocks)> _canvasGroupBefore = new Dictionary<CanvasGroup, (float, bool, bool)>();
+
+    // gems counter restore
+    private bool _gemsCounterStored = false;
+    private bool _gemsCounterPrevActive = false;
 
     void Reset()
     {
@@ -80,13 +91,15 @@ public class HeroPreviewPanel : MonoBehaviour
     {
         // garante restauração se algo foi esquecido
         RestorePullButtonsInPanel();
+        RestoreGemsCounter();
         if (Instance == this) Instance = null;
     }
 
     void OnDisable()
     {
-        // Se o painel for desativado por outro script/animator, restaura os botões
+        // Se o painel for desativado por outro script/animator, restaura os botões e gems
         RestorePullButtonsInPanel();
+        RestoreGemsCounter();
     }
 
     // Backwards-compatible Show overloads
@@ -108,6 +121,10 @@ public class HeroPreviewPanel : MonoBehaviour
         if (hidePullButtonsInPanel)
             DisablePullButtonsInPanel();
 
+        // hide gems counter BEFORE showing panel
+        if (hideGemsCounter)
+            DisableGemsCounter();
+
         panelRoot.SetActive(true);
         panelRoot.transform.SetAsLastSibling();
 
@@ -117,9 +134,12 @@ public class HeroPreviewPanel : MonoBehaviour
 
     public void Hide()
     {
-        // restore buttons BEFORE deactivating the panel so they become visible immediately
+        // restore buttons and gems BEFORE deactivating the panel so they become visible immediately
         if (hidePullButtonsInPanel)
             RestorePullButtonsInPanel();
+
+        if (hideGemsCounter)
+            RestoreGemsCounter();
 
         if (panelRoot != null)
             panelRoot.SetActive(false);
@@ -275,6 +295,75 @@ public class HeroPreviewPanel : MonoBehaviour
             }
         }
         _canvasGroupBefore.Clear();
+    }
+
+    // --- Gems counter hide/restore ---
+    void DisableGemsCounter()
+    {
+        // attempt to auto-find if not assigned
+        if (gemsCounterObject == null)
+            TryAutoFindGemsCounter();
+
+        if (gemsCounterObject == null)
+        {
+            Debug.Log("HeroPreviewPanel: gemsCounterObject not assigned and auto-find failed.");
+            return;
+        }
+
+        // store and hide
+        _gemsCounterPrevActive = gemsCounterObject.activeSelf;
+        gemsCounterObject.SetActive(false);
+        _gemsCounterStored = true;
+        Debug.Log($"HeroPreviewPanel: hid gems counter '{gemsCounterObject.name}' (previous active={_gemsCounterPrevActive}).");
+    }
+
+    void RestoreGemsCounter()
+    {
+        if (!_gemsCounterStored) return;
+        if (gemsCounterObject != null)
+        {
+            gemsCounterObject.SetActive(_gemsCounterPrevActive);
+            Debug.Log($"HeroPreviewPanel: restored gems counter '{gemsCounterObject.name}' active={_gemsCounterPrevActive}.");
+        }
+        _gemsCounterStored = false;
+    }
+
+    // naive auto-find: search for active/inactive Text or GameObject that contains "gems" or "gem" in the name
+    void TryAutoFindGemsCounter()
+    {
+        // try GameObjects by name
+        var allObjs = Resources.FindObjectsOfTypeAll<GameObject>();
+        foreach (var go in allObjs)
+        {
+            if (go == null) continue;
+            string n = go.name ?? "";
+            if (n.IndexOf("gems", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("gem", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Gems", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                // avoid editor-only objects
+                if (go.hideFlags != HideFlags.None) continue;
+                gemsCounterObject = go;
+                Debug.Log($"HeroPreviewPanel: auto-found gems counter GameObject '{go.name}'.");
+                return;
+            }
+        }
+
+        // fallback: try to find Text components with "Gems" in their text (scene instances only)
+        var texts = Resources.FindObjectsOfTypeAll<Text>();
+        foreach (var t in texts)
+        {
+            if (t == null) continue;
+            if (t.gameObject.hideFlags != HideFlags.None) continue;
+            string s = (t.text ?? "");
+            if (s.IndexOf("Gems", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.IndexOf("gems", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                gemsCounterObject = t.gameObject;
+                Debug.Log($"HeroPreviewPanel: auto-found gems counter via Text '{t.gameObject.name}' with text='{t.text}'.");
+                return;
+            }
+        }
     }
 
     // --- Big preview helpers (aspect / size) ---
