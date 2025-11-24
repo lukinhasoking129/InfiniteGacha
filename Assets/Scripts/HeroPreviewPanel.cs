@@ -11,8 +11,8 @@ using UnityEngine.UI;
 /// - Popula ícone, nome, stats e um preview grande (RawImage).
 /// - Pode ocultar/mostrar botões de Pull e contador de gems quando o painel abre,
 ///   e restaura o estado original quando fecha.
-/// - Permite posicionar o nome no canto superior esquerdo do painel.
-/// - Agora também posiciona o botão Close no canto superior direito do painel.
+/// - Permite posicionar o nome no canto superior esquerdo do painel e o close no topo direito.
+/// - Suporta layout "split": preview (esquerda) / stats (direita).
 public class HeroPreviewPanel : MonoBehaviour
 {
     public static HeroPreviewPanel Instance { get; private set; }
@@ -26,49 +26,43 @@ public class HeroPreviewPanel : MonoBehaviour
     public int bigPreviewMaxSize = 320;
     public Button closeButton;
 
+    [Header("Split layout")]
+    [Tooltip("Se true, o painel será dividido em duas colunas (preview + stats).")]
+    public bool enableSplitLayout = true;
+    [Tooltip("Se true, o preview ficará à esquerda; se false, ficará à direita.")]
+    public bool previewOnLeft = true;
+    [Range(0.25f, 0.75f)]
+    [Tooltip("Proporção (0..1) da largura ocupada pelo preview (ex.: 0.5 = metade).")]
+    public float previewWidthPercent = 0.5f;
+    [Tooltip("Nome dos containers criados em tempo de execução (substitua se preferir).")]
+    public string previewContainerName = "HeroPreviewPanel_PreviewContainer";
+    public string statsContainerName = "HeroPreviewPanel_StatsContainer";
+
     [Header("Name positioning (top-left)")]
-    [Tooltip("Se true, o texto do nome será posicionado no canto superior esquerdo do painel.")]
     public bool moveNameToTopLeft = true;
-    [Tooltip("Se quiser controlar explicitamente o RectTransform do nome, arraste-o aqui. Caso contrário será usado nameText.rectTransform automaticamente.")]
-    public RectTransform nameRect; // opcional: se não definido usa nameText.rectTransform
-    [Tooltip("Offset from top-left (x positive = right, y negative = down)")]
+    public RectTransform nameRect; // opcional
     public Vector2 nameTopLeftOffset = new Vector2(10f, -10f);
-    [Tooltip("Optional width to set on the name RectTransform (0 = leave unchanged)")]
     public float namePreferredWidth = 0f;
 
     [Header("Close button positioning (top-right)")]
-    [Tooltip("Se true, o botão Close será movido para o canto superior direito do painel.")]
     public bool moveCloseToTopRight = true;
-    [Tooltip("Se quiser controlar explicitamente o RectTransform do close button, arraste-o aqui. Caso contrário será usado closeButton.GetComponent<RectTransform>().")]
     public RectTransform closeRect; // optional
-    [Tooltip("Offset from top-right (x negative = left, y negative = down)")]
     public Vector2 closeTopRightOffset = new Vector2(-10f, -10f);
-    [Tooltip("Optional width/height to set on the close RectTransform (0 = leave unchanged)")]
     public Vector2 closePreferredSize = Vector2.zero;
 
     [Header("Pull buttons hiding (choose one)")]
-    [Tooltip("Se preenchido, esses botões serão usados (mais confiável).")]
     public List<Button> pullButtonsExplicit = new List<Button>();
-
-    [Tooltip("Se a lista explícita estiver vazia, o sistema vai buscar por botões filhos do panelRoot que contenham estes termos no nome (case-insensitive).")]
     public string[] pullButtonNameMatchers = new string[] { "PullOnce", "PullTen", "Pull 10", "Pull 1", "PullOnceButton", "PullTenButton" };
 
     public enum HideMode { GameObject, ButtonComponent, CanvasGroup }
-    [Tooltip("Como os botões serão 'escondidos'")]
     public HideMode hideMode = HideMode.GameObject;
-
-    [Tooltip("Se verdadeiro, o painel tentará automaticamente esconder os botões de Pull ao abrir.")]
     public bool hidePullButtonsInPanel = true;
 
     [Header("Gems counter hiding")]
-    [Tooltip("Arraste aqui o GameObject que representa o contador de gems (ou deixe vazio e o sistema tentará localizar automaticamente por nome contendo 'Gems').")]
     public GameObject gemsCounterObject;
-
-    [Tooltip("Se verdadeiro, o painel tentará esconder o contador de gems ao abrir.")]
     public bool hideGemsCounter = true;
 
     [Header("Stats display options")]
-    [Tooltip("Se verdadeiro, o campo ID será mostrado nos stats. Defina como false para esconder o ID.")]
     public bool showIdInStats = false;
 
     [Header("Preview 3D (opcional)")]
@@ -80,10 +74,15 @@ public class HeroPreviewPanel : MonoBehaviour
     // runtime
     GameObject currentPreviewInstance;
 
+    // containers created at runtime (cached)
+    RectTransform _previewContainer;
+    RectTransform _statsContainer;
+
     // state stores for restore
     private readonly Dictionary<GameObject, bool> _gameObjectActiveBefore = new Dictionary<GameObject, bool>();
     private readonly Dictionary<Button, bool> _buttonInteractableBefore = new Dictionary<Button, bool>();
-    private readonly Dictionary<CanvasGroup, (float alpha, bool interactable, bool blocks)> _canvasGroupBefore = new Dictionary<CanvasGroup, (float, bool, bool)>();
+    private readonly Dictionary<CanvasGroup, (float alpha, bool interactable, bool blocks)> _canvasGroupBefore =
+        new Dictionary<CanvasGroup, (float, bool, bool)>();
 
     // gems counter restore
     private bool _gemsCounterStored = false;
@@ -104,7 +103,9 @@ public class HeroPreviewPanel : MonoBehaviour
             return;
         }
 
-        if (panelRoot != null) panelRoot.SetActive(false);
+        if (panelRoot != null)
+            panelRoot.SetActive(false);
+
         if (closeButton != null)
         {
             closeButton.onClick.RemoveAllListeners();
@@ -114,7 +115,6 @@ public class HeroPreviewPanel : MonoBehaviour
 
     void OnDestroy()
     {
-        // garante restauração se algo foi esquecido
         RestorePullButtonsInPanel();
         RestoreGemsCounter();
         if (Instance == this) Instance = null;
@@ -122,7 +122,6 @@ public class HeroPreviewPanel : MonoBehaviour
 
     void OnDisable()
     {
-        // Se o painel for desativado por outro script/animator, restaura os botões e gems
         RestorePullButtonsInPanel();
         RestoreGemsCounter();
     }
@@ -131,7 +130,7 @@ public class HeroPreviewPanel : MonoBehaviour
     public void Show(CharacterData data) { Show(data, null, Vector2.zero); }
     public void Show(CharacterData data, Texture previewTexture) { Show(data, previewTexture, Vector2.zero); }
 
-    // Main Show: accepts optional previewTexture and optional sourceSize (to match slot aspect)
+    // Main Show
     public void Show(CharacterData data, Texture previewTexture, Vector2 sourceSize)
     {
         if (panelRoot == null)
@@ -140,18 +139,27 @@ public class HeroPreviewPanel : MonoBehaviour
             return;
         }
 
+        // Ensure split containers exist so we can layout correctly later
+        if (enableSplitLayout)
+            EnsureSplitContainersAndLayout();
+
         Populate(data, previewTexture, sourceSize);
 
-        // hide pull buttons BEFORE showing panel so they don't flash and so we can restore reliably
         if (hidePullButtonsInPanel)
             DisablePullButtonsInPanel();
 
-        // hide gems counter BEFORE showing panel
         if (hideGemsCounter)
             DisableGemsCounter();
 
+        // Make panel visible first
         panelRoot.SetActive(true);
         panelRoot.transform.SetAsLastSibling();
+
+        // Start coroutine using a runner guaranteed to be active
+        if (enableSplitLayout)
+        {
+            CoroutineRunner.Instance.Run(ApplySplitLayoutNextFrame());
+        }
 
         if (enable3DPreview && data != null && data.prefab3D != null)
             Create3DPreview(data);
@@ -159,7 +167,6 @@ public class HeroPreviewPanel : MonoBehaviour
 
     public void Hide()
     {
-        // restore buttons and gems BEFORE deactivating the panel so they become visible immediately
         if (hidePullButtonsInPanel)
             RestorePullButtonsInPanel();
 
@@ -177,7 +184,7 @@ public class HeroPreviewPanel : MonoBehaviour
         if (iconImage != null)
         {
             if (data != null && data.sprite != null) { iconImage.sprite = data.sprite; iconImage.color = Color.white; }
-            else { iconImage.sprite = null; iconImage.color = new Color(1,1,1,0); }
+            else { iconImage.sprite = null; iconImage.color = new Color(1, 1, 1, 0); }
         }
 
         if (nameText != null)
@@ -187,11 +194,16 @@ public class HeroPreviewPanel : MonoBehaviour
                 MoveNameToTopLeft();
         }
 
-        // position close button (top-right) if requested
         if (moveCloseToTopRight && closeButton != null)
             MoveCloseToTopRight();
 
-        if (statsText != null) statsText.text = FormatStats(data);
+        if (statsText != null)
+        {
+            statsText.text = FormatStats(data);
+            statsText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            statsText.verticalOverflow = VerticalWrapMode.Overflow;
+            statsText.alignment = TextAnchor.UpperLeft;
+        }
 
         if (bigPreviewRaw != null)
         {
@@ -200,134 +212,194 @@ public class HeroPreviewPanel : MonoBehaviour
         }
     }
 
-    // Move the nameText rectTransform to top-left of the panelRoot (or use the provided nameRect).
+    // Creates or finds the preview/stats containers and applies anchors to split the panel.
+    void EnsureSplitContainersAndLayout()
+    {
+        if (panelRoot == null) return;
+        var panelRt = panelRoot.GetComponent<RectTransform>();
+        if (panelRt == null) return;
+
+        Transform existingPreview = panelRt.Find(previewContainerName);
+        Transform existingStats = panelRt.Find(statsContainerName);
+
+        if (existingPreview != null) _previewContainer = existingPreview as RectTransform;
+        if (existingStats != null) _statsContainer = existingStats as RectTransform;
+
+        if (_previewContainer == null)
+        {
+            var go = new GameObject(previewContainerName, typeof(RectTransform));
+            go.transform.SetParent(panelRt, false);
+            _previewContainer = go.GetComponent<RectTransform>();
+        }
+        if (_statsContainer == null)
+        {
+            var go = new GameObject(statsContainerName, typeof(RectTransform));
+            go.transform.SetParent(panelRt, false);
+            _statsContainer = go.GetComponent<RectTransform>();
+        }
+
+        if (previewOnLeft)
+        {
+            _previewContainer.anchorMin = new Vector2(0f, 0f);
+            _previewContainer.anchorMax = new Vector2(previewWidthPercent, 1f);
+            _previewContainer.anchoredPosition = Vector2.zero;
+            _previewContainer.sizeDelta = Vector2.zero;
+
+            _statsContainer.anchorMin = new Vector2(previewWidthPercent, 0f);
+            _statsContainer.anchorMax = new Vector2(1f, 1f);
+            _statsContainer.anchoredPosition = Vector2.zero;
+            _statsContainer.sizeDelta = Vector2.zero;
+        }
+        else
+        {
+            _previewContainer.anchorMin = new Vector2(1f - previewWidthPercent, 0f);
+            _previewContainer.anchorMax = new Vector2(1f, 1f);
+            _previewContainer.anchoredPosition = Vector2.zero;
+            _previewContainer.sizeDelta = Vector2.zero;
+
+            _statsContainer.anchorMin = new Vector2(0f, 0f);
+            _statsContainer.anchorMax = new Vector2(1f - previewWidthPercent, 1f);
+            _statsContainer.anchoredPosition = Vector2.zero;
+            _statsContainer.sizeDelta = Vector2.zero;
+        }
+    }
+
+    // Wait a frame (or until panel rect is valid) then finalize sizes and reparent.
+    IEnumerator ApplySplitLayoutNextFrame()
+    {
+        var panelRt = panelRoot.GetComponent<RectTransform>();
+        int attempts = 0;
+        while (attempts < 6)
+        {
+            yield return null;
+            if (panelRt != null && panelRt.rect.width > 1f) break;
+            attempts++;
+        }
+
+        if (_previewContainer == null || _statsContainer == null || panelRt == null)
+            yield break;
+
+        float previewW = Mathf.Round(panelRt.rect.width * previewWidthPercent);
+        float statsW = Mathf.Round(panelRt.rect.width - previewW);
+        float h = Mathf.Round(panelRt.rect.height);
+
+        _previewContainer.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, previewW);
+        _previewContainer.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
+        _statsContainer.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, statsW);
+        _statsContainer.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
+
+        if (statsText != null && _statsContainer != null)
+        {
+            statsText.rectTransform.SetParent(_statsContainer, worldPositionStays: false);
+            statsText.rectTransform.anchorMin = new Vector2(0f, 0f);
+            statsText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            statsText.rectTransform.anchoredPosition = Vector2.zero;
+            statsText.rectTransform.sizeDelta = Vector2.zero;
+            statsText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            statsText.verticalOverflow = VerticalWrapMode.Overflow;
+            statsText.alignment = TextAnchor.UpperLeft;
+        }
+
+        if (bigPreviewRaw != null && _previewContainer != null)
+        {
+            bigPreviewRaw.rectTransform.SetParent(_previewContainer, worldPositionStays: false);
+            bigPreviewRaw.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
+            bigPreviewRaw.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            bigPreviewRaw.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            bigPreviewRaw.rectTransform.anchoredPosition = Vector2.zero;
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_previewContainer);
+            SetBigPreviewTexture(bigPreviewRaw.texture, Vector2.zero);
+        }
+
+        LayoutRebuilder.ForceRebuildLayoutImmediate(panelRt);
+    }
+
     void MoveNameToTopLeft()
     {
         RectTransform rt = nameRect != null ? nameRect : (nameText != null ? nameText.rectTransform : null);
-        if (rt == null || panelRoot == null)
-        {
-            Debug.LogWarning("HeroPreviewPanel.MoveNameToTopLeft: missing RectTransform or panelRoot.");
-            return;
-        }
+        if (rt == null || panelRoot == null) return;
 
-        // Ensure rt is child of the panel root so anchors are relative to the panel
         if (rt.transform.parent != panelRoot.transform)
         {
-            // preserve world position visually while reparenting
             Vector3 worldPos = rt.transform.position;
             rt.SetParent(panelRoot.transform, worldPositionStays: true);
             rt.position = worldPos;
         }
 
-        // set anchors to top-left and pivot to top-left
         rt.anchorMin = new Vector2(0f, 1f);
         rt.anchorMax = new Vector2(0f, 1f);
         rt.pivot = new Vector2(0f, 1f);
-
-        // set anchored position using offset (x right, y down)
         rt.anchoredPosition = nameTopLeftOffset;
 
-        // optionally set preferred width to avoid wrapping issues
         if (namePreferredWidth > 0f)
             rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, namePreferredWidth);
 
-        // If the Text is inside a LayoutGroup, removing it from layout can avoid layout overwrites.
         var layoutElem = rt.GetComponent<LayoutElement>();
         if (layoutElem == null) layoutElem = rt.gameObject.AddComponent<LayoutElement>();
         layoutElem.ignoreLayout = true;
     }
 
-    // Move close button to top-right of the panelRoot (or use provided closeRect).
     void MoveCloseToTopRight()
     {
         RectTransform rt = closeRect != null ? closeRect : (closeButton != null ? closeButton.GetComponent<RectTransform>() : null);
-        if (rt == null || panelRoot == null)
-        {
-            Debug.LogWarning("HeroPreviewPanel.MoveCloseToTopRight: missing RectTransform or panelRoot.");
-            return;
-        }
+        if (rt == null || panelRoot == null) return;
 
-        // Ensure rt is child of the panel root so anchors are relative to the panel
         if (rt.transform.parent != panelRoot.transform)
         {
-            // preserve world position visually while reparenting
             Vector3 worldPos = rt.transform.position;
             rt.SetParent(panelRoot.transform, worldPositionStays: true);
             rt.position = worldPos;
         }
 
-        // set anchors to top-right and pivot to top-right
         rt.anchorMin = new Vector2(1f, 1f);
         rt.anchorMax = new Vector2(1f, 1f);
         rt.pivot = new Vector2(1f, 1f);
-
-        // anchoredPosition: x negative = left, y negative = down
         rt.anchoredPosition = closeTopRightOffset;
 
-        // optionally set preferred size
         if (closePreferredSize.x > 0f)
             rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, closePreferredSize.x);
         if (closePreferredSize.y > 0f)
             rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, closePreferredSize.y);
 
-        // Remove from layout groups so layout doesn't override position/size
         var layoutElem = rt.GetComponent<LayoutElement>();
         if (layoutElem == null) layoutElem = rt.gameObject.AddComponent<LayoutElement>();
         layoutElem.ignoreLayout = true;
     }
 
-    // Find target buttons: explicit list first, otherwise search under panelRoot by name matchers.
     private List<Button> FindTargetPullButtons()
     {
         var found = new List<Button>();
-
-        // explicit assigned buttons (only non-null)
         if (pullButtonsExplicit != null && pullButtonsExplicit.Count > 0)
         {
             foreach (var b in pullButtonsExplicit)
                 if (b != null && !found.Contains(b)) found.Add(b);
-            Debug.Log($"HeroPreviewPanel: using {found.Count} explicit pullButtons from Inspector.");
             return found;
         }
-
-        // fallback: search under panelRoot
-        if (panelRoot == null)
-        {
-            Debug.Log("HeroPreviewPanel: panelRoot is null, cannot search for pull buttons.");
-            return found;
-        }
-
+        if (panelRoot == null) return found;
         var allButtons = panelRoot.GetComponentsInChildren<Button>(true);
         foreach (var btn in allButtons)
         {
             if (btn == null) continue;
             string name = btn.gameObject.name ?? "";
-            bool match = false;
             foreach (var matcher in pullButtonNameMatchers)
             {
                 if (string.IsNullOrEmpty(matcher)) continue;
-                if (name.IndexOf(matcher, System.StringComparison.OrdinalIgnoreCase) >= 0) { match = true; break; }
+                if (name.IndexOf(matcher, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    if (!found.Contains(btn)) found.Add(btn);
+                    break;
+                }
             }
-            if (match && !found.Contains(btn)) found.Add(btn);
         }
-
-        Debug.Log($"HeroPreviewPanel: found {found.Count} pull button(s) by name matching under panelRoot.");
-        if (found.Count > 0)
-            Debug.Log("Matched buttons: " + string.Join(", ", found.Select(b => b.gameObject.name)));
         return found;
     }
 
-    // Disable according to chosen hideMode; store previous states for restore.
     void DisablePullButtonsInPanel()
     {
         var targets = FindTargetPullButtons();
-        if (targets == null || targets.Count == 0)
-        {
-            Debug.Log("HeroPreviewPanel: no pull buttons found to hide.");
-            return;
-        }
+        if (targets == null || targets.Count == 0) return;
 
-        // clear previous stores (we will refill)
         _gameObjectActiveBefore.Clear();
         _buttonInteractableBefore.Clear();
         _canvasGroupBefore.Clear();
@@ -341,58 +413,51 @@ public class HeroPreviewPanel : MonoBehaviour
                     if (!_gameObjectActiveBefore.ContainsKey(btn.gameObject))
                         _gameObjectActiveBefore[btn.gameObject] = btn.gameObject.activeSelf;
                     btn.gameObject.SetActive(false);
-                    Debug.Log($"HeroPreviewPanel: deactivated GameObject '{btn.gameObject.name}'.");
                     break;
 
                 case HideMode.ButtonComponent:
                     if (!_buttonInteractableBefore.ContainsKey(btn))
                         _buttonInteractableBefore[btn] = btn.interactable;
                     btn.interactable = false;
-                    Debug.Log($"HeroPreviewPanel: set Button.interactable=false for '{btn.gameObject.name}'.");
                     break;
 
                 case HideMode.CanvasGroup:
                     var cg = btn.gameObject.GetComponent<CanvasGroup>();
                     if (cg == null) cg = btn.gameObject.AddComponent<CanvasGroup>();
                     if (!_canvasGroupBefore.ContainsKey(cg))
-                        _canvasGroupBefore[cg] = (cg.alpha, cg.interactable, cg.blocksRaycasts);
+                        _canvas_groupBefore_add(cg, (cg.alpha, cg.interactable, cg.blocksRaycasts));
                     cg.alpha = 0f;
                     cg.interactable = false;
                     cg.blocksRaycasts = false;
-                    Debug.Log($"HeroPreviewPanel: hid via CanvasGroup for '{btn.gameObject.name}'.");
                     break;
             }
         }
     }
 
-    // Restore previously saved states
+    // helper for adding to canvasGroup dictionary safely
+    void _canvas_groupBefore_add(CanvasGroup cg, (float, bool, bool) v)
+    {
+        if (!_canvasGroupBefore.ContainsKey(cg)) _canvasGroupBefore[cg] = v;
+    }
+
     void RestorePullButtonsInPanel()
     {
-        // restore GameObject active states
         foreach (var kv in _gameObjectActiveBefore.ToList())
         {
             var go = kv.Key;
             if (go != null)
-            {
                 go.SetActive(kv.Value);
-                Debug.Log($"HeroPreviewPanel: restored GameObject '{go.name}' active={kv.Value}.");
-            }
         }
         _gameObjectActiveBefore.Clear();
 
-        // restore Button.interactable
         foreach (var kv in _buttonInteractableBefore.ToList())
         {
             var btn = kv.Key;
             if (btn != null)
-            {
                 btn.interactable = kv.Value;
-                Debug.Log($"HeroPreviewPanel: restored Button.interactable for '{btn.gameObject.name}' = {kv.Value}.");
-            }
         }
         _buttonInteractableBefore.Clear();
 
-        // restore CanvasGroup
         foreach (var kv in _canvasGroupBefore.ToList())
         {
             var cg = kv.Key;
@@ -402,82 +467,57 @@ public class HeroPreviewPanel : MonoBehaviour
                 cg.alpha = vals.alpha;
                 cg.interactable = vals.interactable;
                 cg.blocksRaycasts = vals.blocks;
-                Debug.Log($"HeroPreviewPanel: restored CanvasGroup for '{cg.gameObject.name}'.");
             }
         }
         _canvasGroupBefore.Clear();
     }
 
-    // --- Gems counter hide/restore ---
     void DisableGemsCounter()
     {
-        // attempt to auto-find if not assigned
-        if (gemsCounterObject == null)
-            TryAutoFindGemsCounter();
-
-        if (gemsCounterObject == null)
-        {
-            Debug.Log("HeroPreviewPanel: gemsCounterObject not assigned and auto-find failed.");
-            return;
-        }
-
-        // store and hide
+        if (gemsCounterObject == null) TryAutoFindGemsCounter();
+        if (gemsCounterObject == null) return;
         _gemsCounterPrevActive = gemsCounterObject.activeSelf;
         gemsCounterObject.SetActive(false);
         _gemsCounterStored = true;
-        Debug.Log($"HeroPreviewPanel: hid gems counter '{gemsCounterObject.name}' (previous active={_gemsCounterPrevActive}).");
     }
 
     void RestoreGemsCounter()
     {
         if (!_gemsCounterStored) return;
-        if (gemsCounterObject != null)
-        {
-            gemsCounterObject.SetActive(_gemsCounterPrevActive);
-            Debug.Log($"HeroPreviewPanel: restored gems counter '{gemsCounterObject.name}' active={_gemsCounterPrevActive}.");
-        }
+        if (gemsCounterObject != null) gemsCounterObject.SetActive(_gemsCounterPrevActive);
         _gemsCounterStored = false;
     }
 
-    // naive auto-find: search for active/inactive Text or GameObject that contains "gems" or "gem" in the name
     void TryAutoFindGemsCounter()
     {
-        // try GameObjects by name
         var allObjs = Resources.FindObjectsOfTypeAll<GameObject>();
         foreach (var go in allObjs)
         {
             if (go == null) continue;
             string n = go.name ?? "";
             if (n.IndexOf("gems", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                n.IndexOf("gem", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                n.IndexOf("Gems", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                n.IndexOf("gem", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                // avoid editor-only objects
                 if (go.hideFlags != HideFlags.None) continue;
                 gemsCounterObject = go;
-                Debug.Log($"HeroPreviewPanel: auto-found gems counter GameObject '{go.name}'.");
                 return;
             }
         }
 
-        // fallback: try to find Text components with "Gems" in their text (scene instances only)
         var texts = Resources.FindObjectsOfTypeAll<Text>();
         foreach (var t in texts)
         {
             if (t == null) continue;
             if (t.gameObject.hideFlags != HideFlags.None) continue;
             string s = (t.text ?? "");
-            if (s.IndexOf("Gems", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                s.IndexOf("gems", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            if (s.IndexOf("Gems", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 gemsCounterObject = t.gameObject;
-                Debug.Log($"HeroPreviewPanel: auto-found gems counter via Text '{t.gameObject.name}' with text='{t.text}'.");
                 return;
             }
         }
     }
 
-    // --- Big preview helpers (aspect / size) ---
     void SetBigPreviewTexture(Texture tex, Vector2 sourceSize)
     {
         if (bigPreviewRaw == null) return;
@@ -485,7 +525,7 @@ public class HeroPreviewPanel : MonoBehaviour
         if (tex == null)
         {
             bigPreviewRaw.texture = null;
-            bigPreviewRaw.color = new Color(1,1,1,0f);
+            bigPreviewRaw.color = new Color(1, 1, 1, 0f);
             var le0 = bigPreviewRaw.GetComponent<LayoutElement>();
             if (le0 != null) { le0.ignoreLayout = true; le0.preferredWidth = 0; le0.preferredHeight = 0; }
             return;
@@ -496,42 +536,39 @@ public class HeroPreviewPanel : MonoBehaviour
 
         float srcW = (sourceSize.x > 0.001f && sourceSize.y > 0.001f) ? sourceSize.x : Mathf.Max(1, tex.width);
         float srcH = (sourceSize.x > 0.001f && sourceSize.y > 0.001f) ? sourceSize.y : Mathf.Max(1, tex.height);
-        float aspect = srcW / srcH;
 
-        float targetW, targetH;
-        if (srcW >= srcH)
+        float containerMaxSide = bigPreviewMaxSize;
+        if (_previewContainer != null)
         {
-            targetW = Mathf.Min(bigPreviewMaxSize, srcW);
-            targetH = targetW / aspect;
-        }
-        else
-        {
-            targetH = Mathf.Min(bigPreviewMaxSize, srcH);
-            targetW = targetH * aspect;
+            var cw = Mathf.Max(1f, _previewContainer.rect.width);
+            var ch = Mathf.Max(1f, _previewContainer.rect.height);
+            containerMaxSide = Mathf.Min(bigPreviewMaxSize, Mathf.Max(cw, ch) * 0.95f);
         }
 
-        if (targetW <= 0) targetW = Mathf.Min(bigPreviewMaxSize, tex.width);
-        if (targetH <= 0) targetH = Mathf.Min(bigPreviewMaxSize, tex.height);
+        float maxSide = Mathf.Max(srcW, srcH);
+        float scale = 1f;
+        if (maxSide > containerMaxSide) scale = containerMaxSide / maxSide;
+
+        float newW = srcW * scale;
+        float newH = srcH * scale;
 
         var rt = bigPreviewRaw.rectTransform;
         if (rt != null)
         {
             rt.localScale = Vector3.one;
             rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, targetW);
-            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, targetH);
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, newW);
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, newH);
         }
 
         var le = bigPreviewRaw.GetComponent<LayoutElement>();
         if (le == null) le = bigPreviewRaw.gameObject.AddComponent<LayoutElement>();
-        le.ignoreLayout = false;
-        le.preferredWidth = targetW;
-        le.preferredHeight = targetH;
-        le.minWidth = -1;
-        le.minHeight = -1;
+        le.ignoreLayout = true;
+        le.preferredWidth = newW;
+        le.preferredHeight = newH;
     }
 
-    // --- 3D preview helpers (kept) ---
+    // 3D preview helpers (kept)
     void Create3DPreview(CharacterData data)
     {
         Clear3DPreview();
@@ -600,7 +637,6 @@ public class HeroPreviewPanel : MonoBehaviour
 
         var sb = new StringBuilder();
 
-        // only include ID if explicitly allowed
         if (showIdInStats)
         {
             var charId = GetMemberValue("characterId") ?? GetMemberValue("id");

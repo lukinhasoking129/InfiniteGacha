@@ -68,6 +68,7 @@
     <Compile Include="Assets\Scripts\DebugVerifier.cs" />
     <Compile Include="Assets\Scripts\HeroPreviewPanel.cs" />
     <Compile Include="Assets\Scripts\PreviewRotator.cs" />
+    <Compile Include="Assets\Scripts\CoroutineRunner.cs" />
     <Compile Include="Assets\Scripts\CurrencyManager.cs" />
     <Compile Include="Assets\Scripts\InventoryManager.cs" />
     <Compile Include="Assets\Scripts\GachaUI.cs" />

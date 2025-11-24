@@ -397,6 +397,37 @@ MonoBehaviour:
   bigPreviewRaw: {fileID: 1246295786}
   bigPreviewMaxSize: 320
   closeButton: {fileID: 1754745320}
+  enableSplitLayout: 1
+  previewOnLeft: 1
+  previewWidthPercent: 0.5
+  previewContainerName: HeroPreviewPanel_PreviewContainer
+  statsContainerName: HeroPreviewPanel_StatsContainer
+  moveNameToTopLeft: 1
+  nameRect: {fileID: 0}
+  nameTopLeftOffset: {x: 10, y: -10}
+  namePreferredWidth: 0
+  moveCloseToTopRight: 1
+  closeRect: {fileID: 0}
+  closeTopRightOffset: {x: -10, y: -10}
+  closePreferredSize: {x: 0, y: 0}
+  pullButtonsExplicit:
+  - {fileID: 1808199242}
+  - {fileID: 28190484}
+  pullButtonNameMatchers:
+  - PullOnce
+  - PullTen
+  - PullTen
+  - Pull 1
+  - Pull 10
+  - PullOnceButton
+  - PullTenButton
+  - ViewPullOnce
+  - ViewPullTen
+  hideMode: 0
+  hidePullButtonsInPanel: 1
+  gemsCounterObject: {fileID: 1972594034}
+  hideGemsCounter: 1
+  showIdInStats: 0
   results3DParent: {fileID: 0}
   previewSpawnPoint: {fileID: 0}
   previewScale: 1
@@ -1044,7 +1075,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1096833412
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1582,7 +1613,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: Button
+  m_Text: X
 --- !u!222 &1336296436
 CanvasRenderer:
   m_ObjectHideFlags: 0
