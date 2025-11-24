@@ -9,9 +9,10 @@ using UnityEngine.UI;
 /// HeroPreviewPanel
 /// - Gerencia o painel modal de preview do herói.
 /// - Popula ícone, nome, stats e um preview grande (RawImage).
-/// - Pode ocultar/mostrar botões de Pull e (NOVO) contador de gems quando o painel abre,
+/// - Pode ocultar/mostrar botões de Pull e contador de gems quando o painel abre,
 ///   e restaura o estado original quando fecha.
-/// - Três modos de ocultação: GameObject, Button component, CanvasGroup visual hide.
+/// - Permite posicionar o nome no canto superior esquerdo do painel.
+/// - Agora também posiciona o botão Close no canto superior direito do painel.
 public class HeroPreviewPanel : MonoBehaviour
 {
     public static HeroPreviewPanel Instance { get; private set; }
@@ -24,6 +25,26 @@ public class HeroPreviewPanel : MonoBehaviour
     public RawImage bigPreviewRaw;
     public int bigPreviewMaxSize = 320;
     public Button closeButton;
+
+    [Header("Name positioning (top-left)")]
+    [Tooltip("Se true, o texto do nome será posicionado no canto superior esquerdo do painel.")]
+    public bool moveNameToTopLeft = true;
+    [Tooltip("Se quiser controlar explicitamente o RectTransform do nome, arraste-o aqui. Caso contrário será usado nameText.rectTransform automaticamente.")]
+    public RectTransform nameRect; // opcional: se não definido usa nameText.rectTransform
+    [Tooltip("Offset from top-left (x positive = right, y negative = down)")]
+    public Vector2 nameTopLeftOffset = new Vector2(10f, -10f);
+    [Tooltip("Optional width to set on the name RectTransform (0 = leave unchanged)")]
+    public float namePreferredWidth = 0f;
+
+    [Header("Close button positioning (top-right)")]
+    [Tooltip("Se true, o botão Close será movido para o canto superior direito do painel.")]
+    public bool moveCloseToTopRight = true;
+    [Tooltip("Se quiser controlar explicitamente o RectTransform do close button, arraste-o aqui. Caso contrário será usado closeButton.GetComponent<RectTransform>().")]
+    public RectTransform closeRect; // optional
+    [Tooltip("Offset from top-right (x negative = left, y negative = down)")]
+    public Vector2 closeTopRightOffset = new Vector2(-10f, -10f);
+    [Tooltip("Optional width/height to set on the close RectTransform (0 = leave unchanged)")]
+    public Vector2 closePreferredSize = Vector2.zero;
 
     [Header("Pull buttons hiding (choose one)")]
     [Tooltip("Se preenchido, esses botões serão usados (mais confiável).")]
@@ -45,6 +66,10 @@ public class HeroPreviewPanel : MonoBehaviour
 
     [Tooltip("Se verdadeiro, o painel tentará esconder o contador de gems ao abrir.")]
     public bool hideGemsCounter = true;
+
+    [Header("Stats display options")]
+    [Tooltip("Se verdadeiro, o campo ID será mostrado nos stats. Defina como false para esconder o ID.")]
+    public bool showIdInStats = false;
 
     [Header("Preview 3D (opcional)")]
     public Transform results3DParent;
@@ -155,7 +180,17 @@ public class HeroPreviewPanel : MonoBehaviour
             else { iconImage.sprite = null; iconImage.color = new Color(1,1,1,0); }
         }
 
-        if (nameText != null) nameText.text = data?.displayName ?? "(sem nome)";
+        if (nameText != null)
+        {
+            nameText.text = data?.displayName ?? "(sem nome)";
+            if (moveNameToTopLeft)
+                MoveNameToTopLeft();
+        }
+
+        // position close button (top-right) if requested
+        if (moveCloseToTopRight && closeButton != null)
+            MoveCloseToTopRight();
+
         if (statsText != null) statsText.text = FormatStats(data);
 
         if (bigPreviewRaw != null)
@@ -163,6 +198,82 @@ public class HeroPreviewPanel : MonoBehaviour
             Texture used = previewTexture ?? (data != null && data.sprite != null ? data.sprite.texture : null);
             SetBigPreviewTexture(used, sourceSize);
         }
+    }
+
+    // Move the nameText rectTransform to top-left of the panelRoot (or use the provided nameRect).
+    void MoveNameToTopLeft()
+    {
+        RectTransform rt = nameRect != null ? nameRect : (nameText != null ? nameText.rectTransform : null);
+        if (rt == null || panelRoot == null)
+        {
+            Debug.LogWarning("HeroPreviewPanel.MoveNameToTopLeft: missing RectTransform or panelRoot.");
+            return;
+        }
+
+        // Ensure rt is child of the panel root so anchors are relative to the panel
+        if (rt.transform.parent != panelRoot.transform)
+        {
+            // preserve world position visually while reparenting
+            Vector3 worldPos = rt.transform.position;
+            rt.SetParent(panelRoot.transform, worldPositionStays: true);
+            rt.position = worldPos;
+        }
+
+        // set anchors to top-left and pivot to top-left
+        rt.anchorMin = new Vector2(0f, 1f);
+        rt.anchorMax = new Vector2(0f, 1f);
+        rt.pivot = new Vector2(0f, 1f);
+
+        // set anchored position using offset (x right, y down)
+        rt.anchoredPosition = nameTopLeftOffset;
+
+        // optionally set preferred width to avoid wrapping issues
+        if (namePreferredWidth > 0f)
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, namePreferredWidth);
+
+        // If the Text is inside a LayoutGroup, removing it from layout can avoid layout overwrites.
+        var layoutElem = rt.GetComponent<LayoutElement>();
+        if (layoutElem == null) layoutElem = rt.gameObject.AddComponent<LayoutElement>();
+        layoutElem.ignoreLayout = true;
+    }
+
+    // Move close button to top-right of the panelRoot (or use provided closeRect).
+    void MoveCloseToTopRight()
+    {
+        RectTransform rt = closeRect != null ? closeRect : (closeButton != null ? closeButton.GetComponent<RectTransform>() : null);
+        if (rt == null || panelRoot == null)
+        {
+            Debug.LogWarning("HeroPreviewPanel.MoveCloseToTopRight: missing RectTransform or panelRoot.");
+            return;
+        }
+
+        // Ensure rt is child of the panel root so anchors are relative to the panel
+        if (rt.transform.parent != panelRoot.transform)
+        {
+            // preserve world position visually while reparenting
+            Vector3 worldPos = rt.transform.position;
+            rt.SetParent(panelRoot.transform, worldPositionStays: true);
+            rt.position = worldPos;
+        }
+
+        // set anchors to top-right and pivot to top-right
+        rt.anchorMin = new Vector2(1f, 1f);
+        rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(1f, 1f);
+
+        // anchoredPosition: x negative = left, y negative = down
+        rt.anchoredPosition = closeTopRightOffset;
+
+        // optionally set preferred size
+        if (closePreferredSize.x > 0f)
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, closePreferredSize.x);
+        if (closePreferredSize.y > 0f)
+            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, closePreferredSize.y);
+
+        // Remove from layout groups so layout doesn't override position/size
+        var layoutElem = rt.GetComponent<LayoutElement>();
+        if (layoutElem == null) layoutElem = rt.gameObject.AddComponent<LayoutElement>();
+        layoutElem.ignoreLayout = true;
     }
 
     // Find target buttons: explicit list first, otherwise search under panelRoot by name matchers.
@@ -488,8 +599,13 @@ public class HeroPreviewPanel : MonoBehaviour
         }
 
         var sb = new StringBuilder();
-        var charId = GetMemberValue("characterId") ?? GetMemberValue("id");
-        if (charId != null) sb.AppendLine($"ID: {charId}");
+
+        // only include ID if explicitly allowed
+        if (showIdInStats)
+        {
+            var charId = GetMemberValue("characterId") ?? GetMemberValue("id");
+            if (charId != null) sb.AppendLine($"ID: {charId}");
+        }
 
         var preferred = new List<string> { "rarity", "level", "hp", "atk", "def", "spd" };
         foreach (var key in preferred)
