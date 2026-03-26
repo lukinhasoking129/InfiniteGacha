@@ -1,19 +1,10 @@
-```markdown
-# Meu Projeto Unity
+📌 Sobre o Projeto
 
-Versão do Unity: coloque aqui (ex: 2022.3.15f1)
+Este projeto tem como objetivo recriar e adaptar conceitos do manhwa, trazendo:
 
-Como abrir:
-1. Clone o repositório.
-2. Abra o Unity Hub e selecione a versão do Unity correspondente.
-3. Abra a pasta do projeto.
+Sistema de invocação (gacha)
+Gerenciamento de personagens
+Estrutura de progressão
+Base para combate
 
-Estrutura:
-- Assets/ - seus scripts, cenas e assets
-- Packages/ - pacotes do Package Manager
-- ProjectSettings/ - configurações do projeto
-
-Notas:
-- A pasta Library/ é gerada pelo Unity e está no .gitignore.
-- Usamos Git LFS para arquivos grandes (texturas, modelos, áudio).
-```
+O jogo ainda está em estágio inicial, então muitas funcionalidades estão em construção.
